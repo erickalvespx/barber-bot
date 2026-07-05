@@ -1,0 +1,26 @@
+{
+  "name": "barber-bot",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "concurrently \"node index.js\" \"npx ngrok http 3000\""
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "@supabase/supabase-js": "^2.110.0",
+    "airtable": "^0.12.2",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "qrcode-terminal": "^0.12.0",
+    "whatsapp-web.js": "github:pedroslopez/whatsapp-web.js"
+  },
+  "devDependencies": {
+    "concurrently": "^10.0.3",
+    "ngrok": "^5.0.0-beta.2"
+  }
+}
