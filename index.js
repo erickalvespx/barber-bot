@@ -414,7 +414,7 @@ client.on('message', async msg => {
                     }
 
                     const dataAgoraSP = new Date(new Date().toLocaleString("en-US", {timeZone: "America/Sao_Paulo"}));
-                    const diaDaSemana = 1; 
+                    const diaDaSemana = dataAgoraSP.getDay(); 
 
                     if (diaDaSemana === 0) {
                         await responderComDigitando(chat, msg, '💈 Olá! Hoje é domingo e estamos fechados para descanso. Voltamos amanhã com as energias recarregadas! Um excelente dia para você! 👊');
