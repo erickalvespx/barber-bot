@@ -464,7 +464,7 @@ client.on('message', async msg => {
                             listaHorariosFormatada += `⏰ *${numeroOpcao}.* ${r.Horário}\n`;
                         });
                         userStates[userId].step = 'choosing_time';
-                        await responderComDigitando(chat, msg, `💈 *Bem-vindo à barbearia!*\n\nTemos estes horários livres para hoje:\n\n${listaHorariosFormatada}\n\nPor favor, digite apenas o *número* do horário desejado:`);
+                        await responderComDigitando(chat, msg, `💈 *Bem-vindo à barbearia Duas Faces!*\n\nTemos estes horários livres para hoje:\n\n${listaHorariosFormatada}\n\nPor favor, digite apenas o *número* do horário desejado:`);
                     }
                 } catch (error) {
                     console.error(error);
