@@ -29,14 +29,10 @@ const userStates = {};
 // ⏱️ FUNÇÃO AUXILIAR DE DELAY
 const delay = ms => new Promise(res => setTimeout(res, ms));
 
-// 📅 FUNÇÃO AUXILIAR PARA GERAR DATAS FORMATADAS (AAAA-MM-DD)
+// 📅 FUNÇÃO AUXILIAR PARA GERAR DATAS FORMATADAS (AAAA-MM-DD) BLINDADA CONTRA FUSO
 function obterDataFormatada(diasAmais = 0) {
-    const data = new Date(new Date().toLocaleString("en-US", {timeZone: "America/Sao_Paulo"}));
-    data.setDate(data.getDate() + diasAmais);
-    const ano = data.getFullYear();
-    const mes = String(data.getMonth() + 1).padStart(2, '0');
-    const dia = String(data.getDate()).padStart(2, '0');
-    return `${ano}-${mes}-${dia}`;
+    const dataAlvo = new Date(Date.now() + (diasAmais * 86400000));
+    return dataAlvo.toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
 }
 
 // 🛠️ FUNÇÃO AUXILIAR: GERAÇÃO SOB DEMANDA DE HORÁRIOS
@@ -262,13 +258,13 @@ async function cobrarMensalidades() {
     }
 }
 
-// 🧹 FUNÇÃO SEGUNDO PLANO (RESET DIÁRIO DE HORÁRIOS)
+// 🧹 FUNÇÃO SEGUNDO PLANO (RESET DIÁRIO DE HORÁRIOS BLINDADA)
 async function resetarHorariosDiarios() {
     try {
-        const agora = new Date(new Date().toLocaleString("en-US", {timeZone: "America/Sao_Paulo"}));
+        const horaAtualBrasil = parseInt(new Date().toLocaleTimeString('pt-BR', { timeZone: 'America/Sao_Paulo', hour: 'numeric' }));
         
-        if (agora.getHours() === 0) {
-            console.log('🧹 [Sistema] Meia-noite detectada! Resetando/limpando horários do passado...');
+        if (horaAtualBrasil === 0) {
+            console.log('🧹 [Sistema] Meia-noite detectada no Brasil! Resetando/limpando horários do passado...');
             
             const dataHojeStr = obterDataFormatada(0);
             
@@ -455,7 +451,7 @@ client.on('message', async msg => {
             }
         } 
         
-        // 1.5. PROCESSANDO A DATA ESCOLHIDA
+        // 1.5. PROCESSANDO A DATA ESCOLHIDA (AGORA COM BLINDAGEM DE HORA ATUAL)
         else if (userStates[userId].step === 'choosing_date') {
             const opcaoData = msg.body.trim();
             const dataEscolhida = userStates[userId].diasDisponiveis ? userStates[userId].diasDisponiveis[opcaoData] : null;
@@ -475,14 +471,10 @@ client.on('message', async msg => {
                 }
 
                 // 🚀 NOVA ROTINA SOB DEMANDA
-                // Se o banco estiver vazio nesse dia, a função criará os horários automaticamente
                 const registros = await garantirHorariosDoDia(dataEscolhida, diaDaSemana);
 
-                // Filtros de tempo real
-                const dataAgoraSP = new Date(new Date().toLocaleString("en-US", {timeZone: "America/Sao_Paulo"}));
-                const horas = String(dataAgoraSP.getHours()).padStart(2, '0');
-                const minutes = String(dataAgoraSP.getMinutes()).padStart(2, '0');
-                const horaAtualStr = `${horas}:${minutes}`;
+                // Filtros de tempo real BLINDADOS CONTRA FUSO DO SERVIDOR
+                const horaAtualStr = new Date().toLocaleTimeString('pt-BR', { timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit' });
                 const dataHojeStr = obterDataFormatada(0);
 
                 const registrosValidos = registros ? registros.filter(r => {
