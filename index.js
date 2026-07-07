@@ -206,6 +206,9 @@ async function verificarEExpirarPagamentos() {
 // 💸 FUNÇÃO SEGUNDO PLANO (COBRANÇA DE MENSALIDADES)
 async function cobrarMensalidades() {
     try {
+
+        console.log('🔍 [Sistema] Verificando vencimento de mensalidades dos barbeiros...');
+
         const { data: registros, error } = await supabase
             .from('Barbeiros')
             .select('*')
