@@ -25,6 +25,7 @@ const client = new Client({
 });
 
 const userStates = {};
+let ultimaLimpezaDiaria = null; // TRAVA DE SEGURANÇA PARA A LIMPEZA DA MEIA-NOITE
 
 // ⏱️ FUNÇÃO AUXILIAR DE DELAY
 const delay = ms => new Promise(res => setTimeout(res, ms));
@@ -37,7 +38,6 @@ function obterDataFormatada(diasAmais = 0) {
 
 // 🛠️ FUNÇÃO AUXILIAR: GERAÇÃO SOB DEMANDA DE HORÁRIOS
 async function garantirHorariosDoDia(dataEscolhida, diaDaSemana) {
-    // 1. Tenta buscar os horários que já existem para essa data
     const { data: registrosExistentes, error: erroBusca } = await supabase
         .from('Disponibilidade')
         .select('*')
@@ -49,39 +49,33 @@ async function garantirHorariosDoDia(dataEscolhida, diaDaSemana) {
         return [];
     }
 
-    // 2. Se já existirem horários cadastrados, apenas retorna eles (o dia já foi criado antes)
     if (registrosExistentes && registrosExistentes.length > 0) {
         return registrosExistentes;
     }
 
-    // 3. Se não existirem (banco vazio nesse dia), vamos CRIAR os horários automaticamente!
     console.log(`[Sistema] Gerando horários sob demanda para a data ${dataEscolhida}...`);
     
     let horariosPadrao = [];
     if (diaDaSemana >= 1 && diaDaSemana <= 5) { 
-        // Segunda a Sexta
         horariosPadrao = [
             '08:00', '08:30', '09:00', '09:30', '10:00', '10:30', '11:00', '11:30',
             '14:00', '14:30', '15:00', '15:30', '16:00', '16:30', '17:00', '17:30', '18:00', '18:30', '19:00', '19:30'
         ];
     } else if (diaDaSemana === 6) { 
-        // Sábado (horário diferente)
         horariosPadrao = [
             '08:00', '08:30', '09:00', '09:30', '10:00', '10:30', '11:00', '11:30',
             '13:00', '13:30', '14:00', '14:30', '15:00', '15:30', '16:00', '16:30', '17:00', '17:30'
         ];
     } else {
-        return []; // Domingo retorna vazio, pois é folga
+        return []; 
     }
 
-    // Monta a lista de linhas para injetar no Supabase
     const novosRegistros = horariosPadrao.map(hora => ({
         "Horário": hora,
         "Status": "Livre",
         "Data": dataEscolhida
     }));
 
-    // Dispara tudo de uma vez (Bulk Insert) para o Supabase
     const { data: registrosInseridos, error: erroInsert } = await supabase
         .from('Disponibilidade')
         .insert(novosRegistros)
@@ -206,7 +200,6 @@ async function verificarEExpirarPagamentos() {
 // 💸 FUNÇÃO SEGUNDO PLANO (COBRANÇA DE MENSALIDADES)
 async function cobrarMensalidades() {
     try {
-
         console.log('🔍 [Sistema] Verificando vencimento de mensalidades dos barbeiros...');
 
         const { data: registros, error } = await supabase
@@ -261,31 +254,49 @@ async function cobrarMensalidades() {
     }
 }
 
-// 🧹 FUNÇÃO SEGUNDO PLANO (RESET DIÁRIO DE HORÁRIOS BLINDADA)
+// 🧹 FUNÇÃO SEGUNDO PLANO (RESET E LIMPEZA DIÁRIA CIRÚRGICA)
 async function resetarHorariosDiarios() {
     try {
-        const horaAtualBrasil = parseInt(new Date().toLocaleTimeString('pt-BR', { timeZone: 'America/Sao_Paulo', hour: 'numeric' }));
+        const dataHojeStr = obterDataFormatada(0);
         
-        if (horaAtualBrasil === 0) {
-            console.log('🧹 [Sistema] Meia-noite detectada no Brasil! Resetando/limpando horários do passado...');
-            
-            const dataHojeStr = obterDataFormatada(0);
-            
-            const { error } = await supabase
-                .from('Disponibilidade')
-                .update({ Status: 'Livre' })
-                .lt('Data', dataHojeStr)
-                .neq('Status', 'Livre'); 
+        // Impede que a limpeza rode mais de uma vez no mesmo dia
+        if (ultimaLimpezaDiaria === dataHojeStr) return;
 
-            if (error) throw error;
-            console.log('✅ [Sistema] Horários antigos foram resetados com sucesso!');
+        // Pega a hora exata do Brasil de forma infalível
+        const dataHoraSP = new Date(new Date().toLocaleString("en-US", {timeZone: "America/Sao_Paulo"}));
+        const horaAtualBrasil = dataHoraSP.getHours(); 
+        
+        // Se for entre 00:00 e 00:59
+        if (horaAtualBrasil === 0) {
+            console.log('🧹 [Sistema] Meia-noite detectada no Brasil! Executando limpeza profunda...');
+            
+            // 1. DELETA horários da tabela Disponibilidade de dias que já passaram
+            const { error: errDisp } = await supabase
+                .from('Disponibilidade')
+                .delete()
+                .lt('Data', dataHojeStr); 
+
+            // 2. DELETA os agendamentos de dias que já passaram (Mantém o banco leve)
+            const { error: errAgend } = await supabase
+                .from('Agendamentos')
+                .delete()
+                .lt('Data', dataHojeStr);
+
+            if (errDisp) console.error('Erro na limpeza da Disponibilidade:', errDisp);
+            if (errAgend) console.error('Erro na limpeza dos Agendamentos:', errAgend);
+            
+            if (!errDisp && !errAgend) {
+                console.log('✅ [Sistema] Limpeza de dias anteriores e otimização concluídas com sucesso!');
+                ultimaLimpezaDiaria = dataHojeStr; // Trava o sistema para não rodar novamente hoje
+            }
         }
     } catch (error) {
-        console.error('❌ Erro ao resetar horários diários:', error);
+        console.error('❌ Erro crítico ao resetar horários diários:', error);
     }
 }
 
 client.on('qr', (qr) => qrcode.generate(qr, { small: true }));
+
 client.on('ready', () => {
     console.log('BarberSync: Sistema de Lembretes, Mensalidades e Limpeza Ativado! ⏰🛡️💈');
     
@@ -294,15 +305,17 @@ client.on('ready', () => {
     cobrarMensalidades();
     resetarHorariosDiarios();
     
+    // ⏱️ A CADA 10 MINUTOS (600.000 ms)
     setInterval(() => {
         verificarEDispararLembretes();
         verificarEExpirarPagamentos();
-    }, 300000);
+        resetarHorariosDiarios(); // Agora a verificação de meia noite roda aqui (impossível pular o horário)
+    }, 600000);
 
+    // ⏱️ A CADA 2 HORAS (7.200.000 ms)
     setInterval(() => {
         cobrarMensalidades();
-        resetarHorariosDiarios();
-    }, 3600000);
+    }, 7200000);
 });
 
 // 📶 EVENTO DE MENSAGENS RECEBIDAS
@@ -361,7 +374,6 @@ client.on('message', async msg => {
 
     const text = msg.body.toLowerCase();
     try {
-        // 🚨 FUNCIONALIDADE: CANCELAMENTO MANUAL
         if (text === 'cancelar') {
             try {
                 const { data: ags } = await supabase
@@ -385,7 +397,6 @@ client.on('message', async msg => {
             }
         }
 
-        // 1. INÍCIO DO ATENDIMENTO
         else if (userStates[userId].step === 'idle') {
             const agora = Date.now();
             const tempoPassado = (agora - userStates[userId].lastBooking) / 60000;
@@ -430,7 +441,6 @@ client.on('message', async msg => {
                         }
                     }
 
-                    // Opções dinâmicas de dias
                     const dataHoje = obterDataFormatada(0);
                     const dataAmanha = obterDataFormatada(1);
                     const dataDepois = obterDataFormatada(2);
@@ -454,7 +464,6 @@ client.on('message', async msg => {
             }
         } 
         
-        // 1.5. PROCESSANDO A DATA ESCOLHIDA (AGORA COM BLINDAGEM DE HORA ATUAL)
         else if (userStates[userId].step === 'choosing_date') {
             const opcaoData = msg.body.trim();
             const dataEscolhida = userStates[userId].diasDisponiveis ? userStates[userId].diasDisponiveis[opcaoData] : null;
@@ -473,18 +482,15 @@ client.on('message', async msg => {
                     return;
                 }
 
-                // 🚀 NOVA ROTINA SOB DEMANDA
                 const registros = await garantirHorariosDoDia(dataEscolhida, diaDaSemana);
-
-                // Filtros de tempo real BLINDADOS CONTRA FUSO DO SERVIDOR
                 const horaAtualStr = new Date().toLocaleTimeString('pt-BR', { timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit' });
                 const dataHojeStr = obterDataFormatada(0);
 
                 const registrosValidos = registros ? registros.filter(r => {
-                    if (r.Status !== 'Livre') return false; // Mostra apenas quem está livre
+                    if (r.Status !== 'Livre') return false; 
                     
                     if (dataEscolhida === dataHojeStr) {
-                        return r.Horário > horaAtualStr; // Se for hoje, oculta os que já passaram
+                        return r.Horário > horaAtualStr; 
                     }
                     return true;
                 }) : [];
@@ -512,7 +518,6 @@ client.on('message', async msg => {
             }
         }
 
-        // 2. ESCOLHENDO O HORÁRIO
         else if (userStates[userId].step === 'choosing_time') {
             const opcaoDigitada = msg.body.trim();
             const escolha = userStates[userId].horariosDisponiveis ? userStates[userId].horariosDisponiveis[opcaoDigitada] : null;
@@ -544,7 +549,6 @@ client.on('message', async msg => {
             }
         }
 
-        // 3. ESCOLHENDO O SERVIÇO
         else if (userStates[userId].step === 'choosing_service') {
             const opcao = msg.body.trim();
             const escolhaServico = userStates[userId].servicosDisponiveis ? userStates[userId].servicosDisponiveis[opcao] : null;
@@ -561,7 +565,6 @@ client.on('message', async msg => {
             await responderComDigitando(chat, msg, `Resumo do seu agendamento:\n📅 Data: *${diaVisual}*\n⏰ Horário: *${userStates[userId].horarioEscolhido}*\n✂️ Serviço: *${escolhaServico.nome}*\n\nEstá correto?\n\n👍 *1.* Sim\n🔄 *2.* Não (Refazer escolha)`);
         }
 
-        // 3.5. CONFIRMANDO HORÁRIO E SERVIÇO
         else if (userStates[userId].step === 'confirming_time_and_service') {
             const opcaoConfirmacao = msg.body.trim();
             if (opcaoConfirmacao === '1' || opcaoConfirmacao.toLowerCase() === 'sim') {
@@ -577,7 +580,6 @@ client.on('message', async msg => {
             }
         }
 
-        // 4. PERGUNTANDO O NOME
         else if (userStates[userId].step === 'asking_name') {
             userStates[userId].nomeCliente = msg.body;
             userStates[userId].step = 'choosing_payment_method';
@@ -585,7 +587,6 @@ client.on('message', async msg => {
             await responderComDigitando(chat, msg, `Perfeito, *${userStates[userId].nomeCliente}*! Como você prefere realizar o pagamento?\n\n💵 *1.* Dinheiro (Pagar presencialmente na barbearia)\n⚡ *2.* Pix (Confirmação automática)\n💳 *3.* Cartão de Crédito (Via link seguro)\n\nDigite apenas o *número* correspondente à sua escolha:`);
         }
 
-        // 5. PROCESSANDO A FORMA DE PAGAMENTO
         else if (userStates[userId].step === 'choosing_payment_method') {
             const opcaoPagamento = msg.body.trim();
             if (!['1', '2', '3'].includes(opcaoPagamento)) {
@@ -606,7 +607,6 @@ client.on('message', async msg => {
                 const dataCorreta = userStates[userId].dataSelecionada;
                 const diaVisualFinal = dataCorreta.split('-').reverse().join('/');
 
-                // --- CASO 1: DINHEIRO ---
                 if (opcaoPagamento === '1') {
                     await supabase.from('Agendamentos').insert([{ 
                         "Data": dataCorreta, "Nome": userStates[userId].nomeCliente, 
@@ -622,7 +622,6 @@ client.on('message', async msg => {
                     userStates[userId].step = 'idle';
                 }
 
-                // --- CASO 2: PIX AUTOMÁTICO ---
                 else if (opcaoPagamento === '2') {
                     const { data: novoAgendamento } = await supabase.from('Agendamentos').insert([{ 
                         "Data": dataCorreta, "Nome": userStates[userId].nomeCliente, 
@@ -661,7 +660,6 @@ client.on('message', async msg => {
                     userStates[userId].step = 'idle';
                 }
 
-                // --- CASO 3: CARTÃO DE CRÉDITO ---
                 else if (opcaoPagamento === '3') {
                     const { data: novoAgendamento } = await supabase.from('Agendamentos').insert([{ 
                         "Data": dataCorreta, "Nome": userStates[userId].nomeCliente, 
