@@ -37,7 +37,7 @@ function obterDataFormatada(diasAmais = 0) {
 }
 
 // 🛠️ FUNÇÃO AUXILIAR: GERAÇÃO SOB DEMANDA DE HORÁRIOS
-async function garantizarHorariosDoDia(dataEscolhida, diaDaSemana) {
+async function garantirHorariosDoDia(dataEscolhida, diaDaSemana) {
     const { data: registrosExistentes, error: erroBusca } = await supabase
         .from('Disponibilidade')
         .select('*')
