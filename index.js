@@ -37,7 +37,7 @@ function obterDataFormatada(diasAmais = 0) {
 }
 
 // 🛠️ FUNÇÃO AUXILIAR: GERAÇÃO SOB DEMANDA DE HORÁRIOS
-async function garantirHorariosDoDia(dataEscolhida, diaDaSemana) {
+async function garantizarHorariosDoDia(dataEscolhida, diaDaSemana) {
     const { data: registrosExistentes, error: erroBusca } = await supabase
         .from('Disponibilidade')
         .select('*')
@@ -67,7 +67,7 @@ async function garantirHorariosDoDia(dataEscolhida, diaDaSemana) {
             '13:00', '13:30', '14:00', '14:30', '15:00', '15:30', '16:00', '16:30', '17:00', '17:30'
         ];
     } else {
-        return []; 
+        return [];
     }
 
     const novosRegistros = horariosPadrao.map(hora => ({
@@ -92,7 +92,7 @@ async function garantirHorariosDoDia(dataEscolhida, diaDaSemana) {
 
 // 🤖 FUNÇÕES DE DIGITAÇÃO
 async function responderComDigitando(chat, msg, texto) {
-    await chat.sendStateTyping(); 
+    await chat.sendStateTyping();
     await delay(1000); 
     return msg.reply(texto);
 }
@@ -120,7 +120,6 @@ async function verificarEDispararLembretes() {
         if (!registros) return;
 
         const agora = new Date(new Date().toLocaleString("en-US", {timeZone: "America/Sao_Paulo"}));
-
         for (const reg of registros) {
             const horarioStr = reg.Horário;
             const telefoneCliente = reg.Telefone;
@@ -128,7 +127,6 @@ async function verificarEDispararLembretes() {
             const servicoCliente = reg.Serviço;
 
             if (!horarioStr || !telefoneCliente) continue;
-
             const [horas, minutos] = horarioStr.split(':').map(Number);
             const dataAgendamento = new Date(agora);
             dataAgendamento.setHours(horas, minutos, 0, 0);
@@ -138,7 +136,6 @@ async function verificarEDispararLembretes() {
 
             if (diferencaEmMinutos > 0 && diferencaEmMinutos <= 60) {
                 console.log(`📢 Enviando lembrete para ${nomeCliente} - Horário: ${horarioStr}`);
-                
                 try {
                     const chat = await client.getChatById(telefoneCliente);
                     await chat.sendStateTyping();
@@ -176,10 +173,8 @@ async function verificarEExpirarPagamentos() {
 
         for (const reg of registrosExpirados) {
             console.log(`⏳ [Limpeza] Expirando agendamento de ${reg.Nome} (${reg.Horário}) por falta de pagamento.`);
-
             await supabase.from('Disponibilidade').update({ Status: 'Livre' }).eq('Horário', reg.Horário).eq('Data', reg.Data);
             await supabase.from('Agendamentos').update({ Status: 'Cancelado' }).eq('id', reg.id);
-
             if (reg.Telefone) {
                 try {
                     const chat = await client.getChatById(reg.Telefone);
@@ -201,7 +196,6 @@ async function verificarEExpirarPagamentos() {
 async function cobrarMensalidades() {
     try {
         console.log('🔍 [Sistema] Verificando vencimento de mensalidades dos barbeiros...');
-
         const { data: registros, error } = await supabase
             .from('Barbeiros')
             .select('*')
@@ -211,7 +205,6 @@ async function cobrarMensalidades() {
         if (!registros) return;
 
         const agora = new Date(new Date().toLocaleString("en-US", {timeZone: "America/Sao_Paulo"}));
-
         for (const reg of registros) {
             const dataVencimentoStr = reg.Data_Vencimento;
             if (!dataVencimentoStr) continue;
@@ -219,7 +212,6 @@ async function cobrarMensalidades() {
             const [ano, mes, dia] = dataVencimentoStr.split('T')[0].split('-');
             const dataVencimento = new Date(ano, mes - 1, dia);
             dataVencimento.setHours(0,0,0,0);
-            
             const hoje = new Date(agora);
             hoje.setHours(0,0,0,0);
 
@@ -229,52 +221,56 @@ async function cobrarMensalidades() {
             const telefone = reg.Telefone;
             const nome = reg.Nome;
             const etapa = reg.Etapa_Cobranca || 'Nenhum';
-            const chavePix = "88992135659"; 
+            const chavePix = "88992135659";
 
             try {
-                if (diffDays === 3 && etapa !== 'Aviso 3 Dias') {
-                    await client.sendMessage(telefone, `Fala, ${nome}! Passando para lembrar que faltam 3 dias para o vencimento da sua mensalidade (R$ 147,00).\n\nQuando puder, é só enviar para a chave Pix: *${chavePix}* e me mandar o comprovante aqui! 💈`);
-                    await supabase.from('Barbeiros').update({ Etapa_Cobranca: 'Aviso 3 Dias' }).eq('id', reg.id);
+                if (diffDays === 3 && etapa !== 'Aviso 3 Days') {
+                    await client.sendMessage(telefone, `Fala, ${nome}! Passando para lembrar que faltam 3 dias para o vencimento da sua mensalidade (R$ 177,00).\n\nQuando puder, é só enviar para a chave Pix: *${chavePix}* e me mandar o comprovante aqui! 💈`);
+                    await supabase.from('Barbeiros').update({ Etapa_Cobranca: 'Aviso 3 Days' }).eq('id', reg.id);
                 } 
                 else if (diffDays === 0 && etapa !== 'Aviso Vencimento') {
-                    await client.sendMessage(telefone, `Fala, ${nome}! Hoje é o dia do vencimento da sua mensalidade de R$ 147,00.\n\nSegue a chave Pix: *${chavePix}*. Assim que transferir, manda o comprovante pra gente dar baixa no sistema! 💈👊`);
+                    await client.sendMessage(telefone, `Fala, ${nome}! Hoje é o dia do vencimento da sua mensalidade de R$ 177,00.\n\nSegue a chave Pix: *${chavePix}*. Assim que transferir, manda o comprovante pra gente dar baixa no sistema! 💈👊`);
                     await supabase.from('Barbeiros').update({ Etapa_Cobranca: 'Aviso Vencimento' }).eq('id', reg.id);
                 }
                 else if (diffDays < 0 && diffDays >= -3 && etapa !== 'Atrasado' && reg.Status === 'Pendente') {
-                    await client.sendMessage(telefone, `⚠️ *Aviso de Atraso*\n\nFala, ${nome}. Identificamos que a sua mensalidade está pendente há ${Math.abs(diffDays)} dia(s).\n\nPara mantermos a parceria em dia, por favor, regularize o pagamento de R$ 147,00 na chave Pix: *${chavePix}*.`);
+                    await client.sendMessage(telefone, `⚠️ *Aviso de Atraso*\n\nFala, ${nome}. Identificamos que a sua mensalidade está pendente há ${Math.abs(diffDays)} dia(s).\n\nPara mantermos a parceria em dia, por favor, regularize o pagamento de R$ 177,00 na chave Pix: *${chavePix}*.`);
                     await supabase.from('Barbeiros').update({ Etapa_Cobranca: 'Atrasado' }).eq('id', reg.id);
                 }
             } catch (err) {
                 console.error(`❌ Erro ao enviar cobrança para ${nome}:`, err.message);
             }
-            await delay(2000); 
+            await delay(2000);
         }
     } catch (error) {
         console.error('❌ Erro na rotina de cobrança:', error);
     }
 }
 
-// 🧹 FUNÇÃO SEGUNDO PLANO (RESET E LIMPEZA DIÁRIA CIRÚRGICA)
+// 🧹 FUNÇÃO SEGUNDO PLANO (RESET E LIMPEZA DIÁRIA CIRÚRGICA BLINDADA)
 async function resetarHorariosDiarios() {
     try {
-        const dataHojeStr = obterDataFormatada(0);
+        // Captura a hora exata de Brasília independente de onde o servidor esteja hospedado
+        const agora = new Date();
+        const fusoBrasilia = new Date(agora.toLocaleString("en-US", { timeZone: "America/Sao_Paulo" }));
+        const horaAtualBrasil = fusoBrasilia.getHours(); 
         
+        const dataHojeStr = obterDataFormatada(0);
+
         // Impede que a limpeza rode mais de uma vez no mesmo dia
         if (ultimaLimpezaDiaria === dataHojeStr) return;
 
-        // Pega a hora exata do Brasil de forma infalível
-        const dataHoraSP = new Date(new Date().toLocaleString("en-US", {timeZone: "America/Sao_Paulo"}));
-        const horaAtualBrasil = dataHoraSP.getHours(); 
-        
-        // Se for entre 00:00 e 00:59
+        // Se for entre 00:00 e 00:59 (Janela da Meia-Noite)
         if (horaAtualBrasil === 0) {
-            console.log('🧹 [Sistema] Meia-noite detectada no Brasil! Executando limpeza profunda...');
+            console.log(`🧹 [Sistema] Meia-noite detectada (${fusoBrasilia.toLocaleTimeString('pt-BR')})! Executando limpeza profunda...`);
             
+            // Ativa a trava IMEDIATAMENTE para evitar que o próximo ciclo de 10min concorra se a query demorar
+            ultimaLimpezaDiaria = dataHojeStr;
+
             // 1. DELETA horários da tabela Disponibilidade de dias que já passaram
             const { error: errDisp } = await supabase
                 .from('Disponibilidade')
                 .delete()
-                .lt('Data', dataHojeStr); 
+                .lt('Data', dataHojeStr);
 
             // 2. DELETA os agendamentos de dias que já passaram (Mantém o banco leve)
             const { error: errAgend } = await supabase
@@ -282,16 +278,23 @@ async function resetarHorariosDiarios() {
                 .delete()
                 .lt('Data', dataHojeStr);
 
-            if (errDisp) console.error('Erro na limpeza da Disponibilidade:', errDisp);
-            if (errAgend) console.error('Erro na limpeza dos Agendamentos:', errAgend);
-            
-            if (!errDisp && !errAgend) {
-                console.log('✅ [Sistema] Limpeza de dias anteriores e otimização concluídas com sucesso!');
-                ultimaLimpezaDiaria = dataHojeStr; // Trava o sistema para não rodar novamente hoje
+            if (errDisp) {
+                console.error('❌ Erro na limpeza da Disponibilidade:', errDisp);
+                ultimaLimpezaDiaria = null; // Desfaz a trava para tentar de novo no próximo ciclo de 10min
+                return;
             }
+            
+            if (errAgend) {
+                console.error('❌ Erro na limpeza dos Agendamentos:', errAgend);
+                ultimaLimpezaDiaria = null; // Desfaz a trava para tentar de novo no próximo ciclo de 10min
+                return;
+            }
+
+            console.log('✅ [Sistema] Limpeza de dias anteriores e otimização concluídas com sucesso!');
         }
     } catch (error) {
         console.error('❌ Erro crítico ao resetar horários diários:', error);
+        ultimaLimpezaDiaria = null; // Garante que não vai travar desligado se falhar catastroficamente
     }
 }
 
@@ -383,7 +386,6 @@ client.on('message', async msg => {
                     .in('Status', ['Agendado', 'Aguardando Pagamento']);
 
                 if (!ags || ags.length === 0) return responderComDigitando(chat, msg, 'Você não possui agendamentos ativos para cancelar.');
-                
                 for (const ag of ags) {
                     await supabase.from('Disponibilidade').update({ Status: 'Livre' }).eq('Horário', ag.Horário).eq('Data', ag.Data);
                     await supabase.from('Agendamentos').update({ Status: 'Cancelado' }).eq('id', ag.id);
@@ -429,7 +431,7 @@ client.on('message', async msg => {
                             return responderComDigitando(chat, msg, `💈 Ei! Você já iniciou um agendamento de *${ag.Serviço}* para às *${ag.Horário}*, mas ele ainda está *Aguardando Pagamento*.\n\nSe preferir desistir e liberar essa vaga, digite *"cancelar"* a qualquer momento.`);
                         }
                         const diaMarcado = ag.Data.split('-').reverse().slice(0,2).join('/');
-                        return responderComDigitando(chat, msg, `💈 Fala, campeão! Verifiquei no sistema e você já possui um horário de *${ag.Serviço}* pré-agendado para o dia *${diaMarcado}* às *${ag.Horário}*.\n\nSe houver algum imprevisto, basta digitar a palavra *"cancelar"* aqui a qualquer momento. Caso contrário, te esperamos lá! 👊`);
+                        return responderComDigitando(chat, msg, `💈 Fala, campeão! Verifiquei no sistema e você já possui um horário de *${ag.Serviço}* pré-agendado para the dia *${diaMarcado}* às *${ag.Horário}*.\n\nSe houver algum imprevisto, basta digitar a palavra *"cancelar"* aqui a qualquer momento. Caso contrário, te esperamos lá! 👊`);
                     }
 
                     const { data: configRecord } = await supabase.from('Configuracoes').select('*').limit(1);
@@ -455,7 +457,6 @@ client.on('message', async msg => {
 
                     userStates[userId].step = 'choosing_date';
                     await responderComDigitando(chat, msg, `💈 *Bem-vindo à barbearia Duas Faces!*\n\nPara quando você deseja agendar o seu horário?\n\n📅 *1.* Hoje (${formatarBr(dataHoje)})\n📅 *2.* Amanhã (${formatarBr(dataAmanha)})\n📅 *3.* Depois de Amanhã (${formatarBr(dataDepois)})\n\nDigite apenas o *número* da opção desejada:`);
-
                 } catch (error) {
                     console.error(error);
                     await responderComDigitando(chat, msg, 'Erro ao acessar o sistema. Tente novamente.');
@@ -469,7 +470,6 @@ client.on('message', async msg => {
             const dataEscolhida = userStates[userId].diasDisponiveis ? userStates[userId].diasDisponiveis[opcaoData] : null;
 
             if (!dataEscolhida) return responderComDigitando(chat, msg, '⚠️ Opção inválida. Digite 1 para Hoje, 2 para Amanhã ou 3 para Depois de Amanhã.');
-
             userStates[userId].dataSelecionada = dataEscolhida;
 
             try {
@@ -485,7 +485,6 @@ client.on('message', async msg => {
                 const registros = await garantirHorariosDoDia(dataEscolhida, diaDaSemana);
                 const horaAtualStr = new Date().toLocaleTimeString('pt-BR', { timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit' });
                 const dataHojeStr = obterDataFormatada(0);
-
                 const registrosValidos = registros ? registros.filter(r => {
                     if (r.Status !== 'Livre') return false; 
                     
@@ -520,16 +519,15 @@ client.on('message', async msg => {
 
         else if (userStates[userId].step === 'choosing_time') {
             const opcaoDigitada = msg.body.trim();
-            const escolha = userStates[userId].horariosDisponiveis ? userStates[userId].horariosDisponiveis[opcaoDigitada] : null;
+            const choice = userStates[userId].horariosDisponiveis ? userStates[userId].horariosDisponiveis[opcaoDigitada] : null;
 
-            if (!escolha) return responderComDigitando(chat, msg, '⚠️ Opção inválida.');
+            if (!choice) return responderComDigitando(chat, msg, '⚠️ Opção inválida.');
 
-            userStates[userId].horarioEscolhido = escolha.hora;
-            userStates[userId].recordIdHorario = escolha.id; 
+            userStates[userId].horarioEscolhido = choice.hora;
+            userStates[userId].recordIdHorario = choice.id; 
             
             try {
                 const { data: servicosRegs } = await supabase.from('Servicos').select('*').order('ID', { ascending: true });
-                
                 userStates[userId].servicosDisponiveis = {};
                 let menuServicos = '';
                 
@@ -542,7 +540,7 @@ client.on('message', async msg => {
                 }
                 
                 userStates[userId].step = 'choosing_service';
-                await responderComDigitando(chat, msg, `Boa! Horário das ${escolha.hora} pré-reservado.\n\nQual serviço você gostaria de fazer?\n\n${menuServicos}\nDigite apenas o *número* da opção desejada:`);
+                await responderComDigitando(chat, msg, `Boa! Horário das ${choice.hora} pré-reservado.\n\nQual serviço você gostaria de fazer?\n\n${menuServicos}\nDigite apenas o *número* da opção desejada:`);
             } catch (error) {
                 await responderComDigitando(chat, msg, 'Erro ao carregar os serviços. Envie "oi" para reiniciar.');
                 userStates[userId].step = 'idle';
@@ -615,7 +613,7 @@ client.on('message', async msg => {
                         "Status": "Agendado", "Telefone": userId 
                     }]);
                     await supabase.from('Disponibilidade').update({ Status: 'Ocupado' }).eq('id', userStates[userId].recordIdHorario);
-                    await responderComDigitando(chat, msg, `✅ Tudo certo, ${userStates[userId].nomeCliente}! Seu horário de *${userStates[userId].servicoEscolhido}* foi agendado com sucesso para o dia *${diaVisualFinal}*!\n\nO pagamento poderá ser feito diretamente na barbearia. Te esperamos às *${userStates[userId].horarioEscolhido}*! 👊`);
+                    await responderComDigitando(chat, msg, `✅ Tudo certo, ${userStates[userId].nomeCliente}! Seu horário de *${userStates[userId].servicoEscolhido}* foi agendado com sucesso para the dia *${diaVisualFinal}*!\n\nO pagamento poderá ser feito diretamente na barbearia. Te esperamos às *${userStates[userId].horarioEscolhido}*! 👊`);
                     await enviarComDigitando(chat, '📍 *Aqui está a nossa localização no Google Maps:* \n\nhttps://maps.app.goo.gl/kneNwDiQREA6GqUBA'); 
 
                     userStates[userId].lastBooking = Date.now();
@@ -629,7 +627,6 @@ client.on('message', async msg => {
                         "Valor": Number(userStates[userId].precoServicoPuro),
                         "Status": "Aguardando Pagamento", "Telefone": userId 
                     }]).select();
-                    
                     agendamentoIdParaRollback = novoAgendamento[0].id; 
                     await supabase.from('Disponibilidade').update({ Status: 'Ocupado' }).eq('id', userStates[userId].recordIdHorario);
                     
@@ -667,7 +664,6 @@ client.on('message', async msg => {
                         "Valor": Number(userStates[userId].precoServicoPuro),
                         "Status": "Aguardando Pagamento", "Telefone": userId 
                     }]).select();
-                    
                     agendamentoIdParaRollback = novoAgendamento[0].id; 
                     await supabase.from('Disponibilidade').update({ Status: 'Ocupado' }).eq('id', userStates[userId].recordIdHorario);
                     
@@ -764,13 +760,12 @@ app.post('/webhook', async (req, res) => {
                 const horario = agendamento.Horário;
                 const servico = agendamento.Serviço;
                 const diaVisual = agendamento.Data.split('-').reverse().join('/');
-                
                 try {
                     const chat = await client.getChatById(telefoneCliente);
                     await chat.sendStateTyping();
                     await delay(1000); 
                     
-                    await client.sendMessage(telefoneCliente, `🎉 *Pagamento Confirmado!* \n\nPerfeito, ${nomeCliente}! Seu pagamento foi aprovado pelo Mercado Pago e o seu horário de *${servico}* está 100% confirmado para o dia *${diaVisual}* às *${horario}*.\n\nMuito obrigado! Estamos te esperando! 💈💈`);
+                    await client.sendMessage(telefoneCliente, `🎉 *Pagamento Confirmado!* \n\nPerfeito, ${nomeCliente}! Seu pagamento foi aprovado pelo Mercado Pago e o seu horário de *${servico}* está 100% confirmado para the dia *${diaVisual}* às *${horario}*.\n\nMuito obrigado! Estamos te esperando! 💈💈`);
                     await client.sendMessage(telefoneCliente, '📍 *Aqui está a nossa localização no Google Maps caso precise:* \n\nhttps://maps.app.goo.gl/kneNwDiQREA6GqUBA');
                 } catch (err) {
                     console.error("Erro ao enviar mensagem de webhook via whatsapp", err);
