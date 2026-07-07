@@ -490,7 +490,7 @@ client.on('message', async msg => {
                 }) : [];
 
                 if (registrosValidos.length === 0) {
-                    await responderComDigitando(chat, msg, '🛑 Não temos mais horários livres disponíveis para o dia selecionado. Escolha outro dia ou fale com o suporte! 💈');
+                    await responderComDigitando(chat, msg, '🛑 Não temos mais horários livres disponíveis para o dia selecionado. Caso desejar, digite *"Oi"* para escolher outro dia! 💈');
                     userStates[userId].step = 'idle';
                 } else {
                     userStates[userId].horariosDisponiveis = {};
