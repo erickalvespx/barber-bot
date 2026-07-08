@@ -361,7 +361,7 @@ client.on('message', async msg => {
             userStates[userId].blockedUntil = agoraMili + 180000;
             userStates[userId].spamScore = 0;
             userStates[userId].step = 'idle'; 
-            console.log(`🚨 [Anti-Loop] Possível loop de BOT detectado no número ${userId}. Bloqueado por 3 minutos.`);
+            console.log(`🚨 [Anti-Loop] Possível loop de BOT detectado no número ${userId}. Bloqueado por 3 minutes.`);
             return;
         }
     } else {
@@ -377,6 +377,57 @@ client.on('message', async msg => {
 
     const text = msg.body.toLowerCase();
     try {
+        if (text === '#agenda') {
+            const { data: barbeiro, error: authError } = await supabase
+                .from('Barbeiros')
+                .select('Telefone')
+                .eq('Telefone', userId)
+                .single();
+
+            if (authError || !barbeiro) {
+                console.log(`[Segurança] Comando #agenda ignorado para o número: ${userId}`);
+                return;
+            }
+
+            const dataHoje = obterDataFormatada(0);
+            const dataAmanha = obterDataFormatada(1);
+            const dataDepois = obterDataFormatada(2);
+            const dias = [dataHoje, dataAmanha, dataDepois];
+
+            const { data: agendamentos, error: errAg } = await supabase
+                .from('Agendamentos')
+                .select('*')
+                .in('Data', dias)
+                .in('Status', ['Agendado', 'Aguardando Pagamento'])
+                .order('Data', { ascending: true })
+                .order('Horário', { ascending: true });
+
+            if (errAg) {
+                await responderComDigitando(chat, msg, 'Erro ao carregar a agenda.');
+                return;
+            }
+
+            const formatarBr = (dataStr) => dataStr.split('-').reverse().slice(0,2).join('/');
+            let resposta = '📋 *AGENDA DOS PRÓXIMOS 3 DIAS:*\n\n';
+
+            dias.forEach(dia => {
+                resposta += `📅 *Dia ${formatarBr(dia)}:*\n`;
+                const filtrados = agendamentos ? agendamentos.filter(a => a.Data === dia) : [];
+                if (filtrados.length === 0) {
+                    resposta += ' Sem agendamentos para este dia.\n';
+                } else {
+                    filtrados.forEach(a => {
+                        const statusIcon = a.Status === 'Agendado' ? '✅' : '⏳';
+                        resposta += ` ${statusIcon} *${a.Horário}* - ${a.Nome} (${a.Serviço})\n`;
+                    });
+                }
+                resposta += '\n';
+            });
+
+            await responderComDigitando(chat, msg, resposta.trim());
+            return;
+        }
+
         if (text === 'cancelar') {
             try {
                 const { data: ags } = await supabase
