@@ -361,7 +361,7 @@ client.on('message', async msg => {
             userStates[userId].blockedUntil = agoraMili + 180000;
             userStates[userId].spamScore = 0;
             userStates[userId].step = 'idle'; 
-            console.log(`🚨 [Anti-Loop] Possível loop de BOT detectado no número ${userId}. Bloqueado por 3 minutes.`);
+            console.log(`🚨 [Anti-Loop] Possível loop de BOT detectado no número ${userId}. Bloqueado por 3 minutos.`);
             return;
         }
     } else {
@@ -546,7 +546,7 @@ client.on('message', async msg => {
                 }) : [];
 
                 if (registrosValidos.length === 0) {
-                    await responderComDigitando(chat, msg, '🛑 Não temos mais horários livres disponíveis para o dia selecionado. Caso desejar, digite *"Oi"* para escolher outro dia! 💈');
+                    await responderComDigitando(chat, msg, '🛑 Não temos mais horários livres disponíveis para o dia selecionado. Caso deseje, digite *"Oi"* para escolher outro dia! 💈');
                     userStates[userId].step = 'idle';
                 } else {
                     userStates[userId].horariosDisponiveis = {};
@@ -600,18 +600,18 @@ client.on('message', async msg => {
 
         else if (userStates[userId].step === 'choosing_service') {
             const opcao = msg.body.trim();
-            const escolhaServico = userStates[userId].servicosDisponiveis ? userStates[userId].servicosDisponiveis[opcao] : null;
+            const choiceServico = userStates[userId].servicosDisponiveis ? userStates[userId].servicosDisponiveis[opcao] : null;
             
-            if (!escolhaServico) return responderComDigitando(chat, msg, '⚠️ Opção inválida.');
+            if (!choiceServico) return responderComDigitando(chat, msg, '⚠️ Opção inválida.');
 
-            userStates[userId].nomeServicoPuro = escolhaServico.nome;
-            userStates[userId].precoServicoPuro = escolhaServico.preco;
-            userStates[userId].servicoEscolhido = `${escolhaServico.nome} (R$ ${escolhaServico.preco})`;
+            userStates[userId].nomeServicoPuro = choiceServico.nome;
+            userStates[userId].precoServicoPuro = choiceServico.preco;
+            userStates[userId].servicoEscolhido = `${choiceServico.nome} (R$ ${choiceServico.preco})`;
             
             userStates[userId].step = 'confirming_time_and_service';
             
             const diaVisual = userStates[userId].dataSelecionada.split('-').reverse().slice(0,2).join('/');
-            await responderComDigitando(chat, msg, `Resumo do seu agendamento:\n📅 Data: *${diaVisual}*\n⏰ Horário: *${userStates[userId].horarioEscolhido}*\n✂️ Serviço: *${escolhaServico.nome}*\n\nEstá correto?\n\n👍 *1.* Sim\n🔄 *2.* Não (Refazer escolha)`);
+            await responderComDigitando(chat, msg, `Resumo do seu agendamento:\n📅 Data: *${diaVisual}*\n⏰ Horário: *${userStates[userId].horarioEscolhido}*\n✂️ Serviço: *${choiceServico.nome}*\n\nEstá correto?\n\n👍 *1.* Sim\n🔄 *2.* Não (Refazer escolha)`);
         }
 
         else if (userStates[userId].step === 'confirming_time_and_service') {
@@ -700,6 +700,10 @@ client.on('message', async msg => {
                     const pixCopiaCola = dataMP.point_of_interaction?.transaction_data?.qr_code;
 
                     if (!pixCopiaCola) throw new Error('Erro ao gerar código Pix.');
+                    
+                    // 🪵 LOG ADICIONADO: Exibe apenas o nome do cliente que gerou o Pix
+                    console.log(`⚡ [Sistema] Código Pix gerado com sucesso para o cliente: ${userStates[userId].nomeCliente}`);
+                    
                     await supabase.from('Agendamentos').update({ ID_Pagamento_MP: String(dataMP.id) }).eq('id', agendamentoIdParaRollback);
                     
                     await responderComDigitando(chat, msg, `⚡ Perfeito! Para confirmar seu horário do dia *${diaVisualFinal}* às *${userStates[userId].horarioEscolhido}*, utilize o código Pix Copia e Cola que estou enviando na mensagem abaixo 👇`);
@@ -744,6 +748,10 @@ client.on('message', async msg => {
                     const linkCartao = dataMP.init_point;
 
                     if (!linkCartao) throw new Error('Erro ao gerar Preference Link.');
+                    
+                    // 🪵 LOG ADICIONADO: Exibe apenas o nome do cliente que gerou o Link de Cartão
+                    console.log(`💳 [Sistema] Link de Cartão gerado com sucesso para o cliente: ${userStates[userId].nomeCliente}`);
+                    
                     await supabase.from('Agendamentos').update({ ID_Pagamento_MP: String(dataMP.id) }).eq('id', agendamentoIdParaRollback);
                     
                     await responderComDigitando(chat, msg, `💳 Excelente! Clique no link seguro abaixo para realizar o pagamento com seu Cartão de Crédito:\n\n${linkCartao}\n\nAssim que o pagamento for aprovado, o sistema atualizará o seu horário automaticamente!`);
