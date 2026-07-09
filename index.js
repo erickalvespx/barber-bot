@@ -249,30 +249,24 @@ async function cobrarMensalidades() {
 // 🧹 FUNÇÃO SEGUNDO PLANO (RESET E LIMPEZA DIÁRIA CIRÚRGICA BLINDADA)
 async function resetarHorariosDiarios() {
     try {
-        // Captura a hora exata de Brasília independente de onde o servidor esteja hospedado
         const agora = new Date();
         const fusoBrasilia = new Date(agora.toLocaleString("en-US", { timeZone: "America/Sao_Paulo" }));
         const horaAtualBrasil = fusoBrasilia.getHours(); 
         
         const dataHojeStr = obterDataFormatada(0);
 
-        // Impede que a limpeza rode mais de uma vez no mesmo dia
         if (ultimaLimpezaDiaria === dataHojeStr) return;
 
-        // Se for entre 00:00 e 00:59 (Janela da Meia-Noite)
         if (horaAtualBrasil === 0) {
             console.log(`🧹 [Sistema] Meia-noite detectada (${fusoBrasilia.toLocaleTimeString('pt-BR')})! Executando limpeza profunda...`);
             
-            // Ativa a trava IMEDIATAMENTE para evitar que o próximo ciclo de 10min concorra se a query demorar
             ultimaLimpezaDiaria = dataHojeStr;
 
-            // 1. DELETA horários da tabela Disponibilidade de dias que já passaram
             const { error: errDisp } = await supabase
                 .from('Disponibilidade')
                 .delete()
                 .lt('Data', dataHojeStr);
 
-            // 2. DELETA os agendamentos de dias que já passaram (Mantém o banco leve)
             const { error: errAgend } = await supabase
                 .from('Agendamentos')
                 .delete()
@@ -280,13 +274,13 @@ async function resetarHorariosDiarios() {
 
             if (errDisp) {
                 console.error('❌ Erro na limpeza da Disponibilidade:', errDisp);
-                ultimaLimpezaDiaria = null; // Desfaz a trava para tentar de novo no próximo ciclo de 10min
+                ultimaLimpezaDiaria = null; 
                 return;
             }
             
             if (errAgend) {
                 console.error('❌ Erro na limpeza dos Agendamentos:', errAgend);
-                ultimaLimpezaDiaria = null; // Desfaz a trava para tentar de novo no próximo ciclo de 10min
+                ultimaLimpezaDiaria = null; 
                 return;
             }
 
@@ -294,7 +288,7 @@ async function resetarHorariosDiarios() {
         }
     } catch (error) {
         console.error('❌ Erro crítico ao resetar horários diários:', error);
-        ultimaLimpezaDiaria = null; // Garante que não vai travar desligado se falhar catastroficamente
+        ultimaLimpezaDiaria = null; 
     }
 }
 
@@ -308,14 +302,12 @@ client.on('ready', () => {
     cobrarMensalidades();
     resetarHorariosDiarios();
     
-    // ⏱️ A CADA 10 MINUTOS (600.000 ms)
     setInterval(() => {
         verificarEDispararLembretes();
         verificarEExpirarPagamentos();
-        resetarHorariosDiarios(); // Agora a verificação de meia noite roda aqui (impossível pular o horário)
+        resetarHorariosDiarios(); 
     }, 600000);
 
-    // ⏱️ A CADA 2 HORAS (7.200.000 ms)
     setInterval(() => {
         cobrarMensalidades();
     }, 7200000);
@@ -474,15 +466,32 @@ client.on('message', async msg => {
                         .in('Status', ['Agendado', 'Aguardando Pagamento']);
 
                     if (agendamentosAtivos && agendamentosAtivos.length > 0) {
-                        const ag = agendamentosAtivos[0];
-                        userStates[userId].step = 'idle';
-                        userStates[userId].lastBooking = Date.now();
-                        
-                        if (ag.Status === 'Aguardando Pagamento') {
-                            return responderComDigitando(chat, msg, `💈 Ei! Você já iniciou um agendamento de *${ag.Serviço}* para às *${ag.Horário}*, mas ele ainda está *Aguardando Pagamento*.\n\nSe preferir desistir e liberar essa vaga, digite *"cancelar"* a qualquer momento.`);
+                        if (agendamentosAtivos.length === 1) {
+                            const ag = agendamentosAtivos[0];
+                            userStates[userId].step = 'choosing_multi_action';
+                            userStates[userId].lastBooking = Date.now();
+                            
+                            const diaMarcado = ag.Data.split('-').reverse().slice(0,2).join('/');
+                            let mensagemBase = '';
+                            if (ag.Status === 'Aguardando Pagamento') {
+                                mensagemBase = `💈 Ei! Você já iniciou um agendamento de *${ag.Serviço}* para às *${ag.Horário}*, mas ele ainda está *Aguardando Pagamento*.`;
+                            } else {
+                                mensagemBase = `💈 Fala, campeão! Verifiquei no sistema e você já possui um horário de *${ag.Serviço}* pré-agendado para o dia *${diaMarcado}* às *${ag.Horário}*.`;
+                            }
+
+                            mensagemBase += `\n\n🤔 *Deseja agendar mais um horário?*\nVocê pode realizar até 2 agendamentos simultâneos por número.\n\n👍 *1.* Sim, quero fazer mais 1 agendamento\n❌ *2.* Não, quero cancelar meu agendamento atual`;
+                            return responderComDigitando(chat, msg, mensagemBase);
+                        } else {
+                            userStates[userId].step = 'idle';
+                            userStates[userId].lastBooking = Date.now();
+                            let msgTexto = `💈 Fala, campeão! Verifiquei no sistema que você já atingiu o limite máximo de 2 agendamentos ativos:\n`;
+                            agendamentosAtivos.forEach((ag, idx) => {
+                                const diaM = ag.Data.split('-').reverse().slice(0,2).join('/');
+                                msgTexto += `\n📌 *${idx+1}.* ${ag.Serviço} - ${diaM} às ${ag.Horário} (${ag.Status})`;
+                            });
+                            msgTexto += `\n\nSe houver algum imprevisto e precisar desmarcar, basta digitar a palavra *"cancelar"* aqui a qualquer momento.`;
+                            return responderComDigitando(chat, msg, msgTexto);
                         }
-                        const diaMarcado = ag.Data.split('-').reverse().slice(0,2).join('/');
-                        return responderComDigitando(chat, msg, `💈 Fala, campeão! Verifiquei no sistema e você já possui um horário de *${ag.Serviço}* pré-agendado para the dia *${diaMarcado}* às *${ag.Horário}*.\n\nSe houver algum imprevisto, basta digitar a palavra *"cancelar"* aqui a qualquer momento. Caso contrário, te esperamos lá! 👊`);
                     }
 
                     const { data: configRecord } = await supabase.from('Configuracoes').select('*').limit(1);
@@ -516,6 +525,57 @@ client.on('message', async msg => {
             }
         } 
         
+        else if (userStates[userId].step === 'choosing_multi_action') {
+            const opcao = msg.body.trim();
+            if (opcao === '1') {
+                const { data: configRecord } = await supabase.from('Configuracoes').select('*').limit(1);
+                if (configRecord && configRecord.length > 0) {
+                    if (configRecord[0].Modo_Ausente) {
+                        await responderComDigitando(chat, msg, configRecord[0].Mensagem_Ausencia || '💈 Olá! No momento estamos ausentes e não estamos recebendo agendamentos. Voltaremos em breve!');
+                        userStates[userId].step = 'idle';
+                        return;
+                    }
+                }
+
+                const dataHoje = obterDataFormatada(0);
+                const dataAmanha = obterDataFormatada(1);
+                const dataDepois = obterDataFormatada(2);
+
+                userStates[userId].diasDisponiveis = {
+                    '1': dataHoje,
+                    '2': dataAmanha,
+                    '3': dataDepois
+                };
+
+                const formatarBr = (dataStr) => dataStr.split('-').reverse().slice(0,2).join('/');
+
+                userStates[userId].step = 'choosing_date';
+                await responderComDigitando(chat, msg, `💈 *Bem-vindo à barbearia Duas Faces!*\n\nPara quando você deseja agendar o seu horário?\n\n📅 *1.* Hoje (${formatarBr(dataHoje)})\n📅 *2.* Amanhã (${formatarBr(dataAmanha)})\n📅 *3.* Depois de Amanhã (${formatarBr(dataDepois)})\n\nDigite apenas o *número* da opção desejada:`);
+            } else if (opcao === '2') {
+                try {
+                    const { data: ags } = await supabase
+                        .from('Agendamentos')
+                        .select('*')
+                        .eq('Telefone', userId)
+                        .in('Status', ['Agendado', 'Aguardando Pagamento']);
+
+                    if (!ags || ags.length === 0) return responderComDigitando(chat, msg, 'Você não possui agendamentos ativos para cancelar.');
+                    for (const ag of ags) {
+                        await supabase.from('Disponibilidade').update({ Status: 'Livre' }).eq('Horário', ag.Horário).eq('Data', ag.Data);
+                        await supabase.from('Agendamentos').update({ Status: 'Cancelado' }).eq('id', ag.id);
+                    }
+                    
+                    await responderComDigitando(chat, msg, '✅ Agendamento cancelado com sucesso. O horário foi liberado.');
+                    userStates[userId].step = 'idle';
+                    userStates[userId].justCanceled = true; 
+                } catch (e) { 
+                    return responderComDigitando(chat, msg, 'Erro ao processar cancelamento.');
+                }
+            } else {
+                return responderComDigitando(chat, msg, '⚠️ Opção inválida. Digite *1* para fazer um novo agendamento ou *2* para cancelar o agendamento atual.');
+            }
+        }
+
         else if (userStates[userId].step === 'choosing_date') {
             const opcaoData = msg.body.trim();
             const dataEscolhida = userStates[userId].diasDisponiveis ? userStates[userId].diasDisponiveis[opcaoData] : null;
@@ -701,14 +761,13 @@ client.on('message', async msg => {
 
                     if (!pixCopiaCola) throw new Error('Erro ao gerar código Pix.');
                     
-                    // 🪵 LOG ADICIONADO: Exibe apenas o nome do cliente que gerou o Pix
                     console.log(`⚡ [Sistema] Código Pix gerado com sucesso para o cliente: ${userStates[userId].nomeCliente}`);
                     
                     await supabase.from('Agendamentos').update({ ID_Pagamento_MP: String(dataMP.id) }).eq('id', agendamentoIdParaRollback);
                     
                     await responderComDigitando(chat, msg, `⚡ Perfeito! Para confirmar seu horário do dia *${diaVisualFinal}* às *${userStates[userId].horarioEscolhido}*, utilize o código Pix Copia e Cola que estou enviando na mensagem abaixo 👇`);
                     await client.sendMessage(userId, pixCopiaCola);
-                    await enviarComDigitando(chat, `👆 *Copie apenas a mensagem acima*, abra o aplicativo do seu banco e use a opção "Pix Copia e Cola". Nosso sistema identificará o pagamento e confirmará tudo em instantes!`);
+                    await enviarComDigitando(chat, `👆 *Copie apenas a mensagem acima*, abra o aplicativo do seu banco e use a option "Pix Copia e Cola". Nosso sistema identificará o pagamento e confirmará tudo em instantes!`);
                     userStates[userId].step = 'idle';
                 }
 
@@ -749,7 +808,6 @@ client.on('message', async msg => {
 
                     if (!linkCartao) throw new Error('Erro ao gerar Preference Link.');
                     
-                    // 🪵 LOG ADICIONADO: Exibe apenas o nome do cliente que gerou o Link de Cartão
                     console.log(`💳 [Sistema] Link de Cartão gerado com sucesso para o cliente: ${userStates[userId].nomeCliente}`);
                     
                     await supabase.from('Agendamentos').update({ ID_Pagamento_MP: String(dataMP.id) }).eq('id', agendamentoIdParaRollback);
@@ -839,10 +897,7 @@ app.post('/webhook', async (req, res) => {
             const { data: agendamento } = await supabase.from('Agendamentos').select('*').eq('id', agendamentoId).single();
             
             if (agendamento && agendamento.Status === 'Aguardando Pagamento') {
-                // 1. Libera o horário na tabela de Disponibilidade
                 await supabase.from('Disponibilidade').update({ Status: 'Livre' }).eq('Horário', agendamento.Horário).eq('Data', agendamento.Data);
-                
-                // 2. Cancela o agendamento no banco
                 await supabase.from('Agendamentos').update({ Status: 'Cancelado' }).eq('id', agendamentoId);
                 
                 const telefoneCliente = agendamento.Telefone;
@@ -855,7 +910,6 @@ app.post('/webhook', async (req, res) => {
                     await chat.sendStateTyping();
                     await delay(1000); 
                     
-                    // 3. Avisa o cliente imediatamente no WhatsApp
                     await client.sendMessage(telefoneCliente, `⚠️ *Ops, Pagamento Não Aprovado!*\n\nFala, ${nomeCliente}. O Mercado Pago nos informou que a sua tentativa de pagamento foi *recusada* (pode ser saldo insuficiente, cartão bloqueado ou dados incorretos).\n\nComo o pagamento falhou, sua reserva foi cancelada para liberar o horário. Caso queira tentar de novo com outro cartão, pix ou pagar no estabelecimento, basta mandar um *"Oi"* para reiniciar! 💈👊`);
                 } catch (errWpp) {
                     console.error("Erro ao enviar mensagem de recusa via whatsapp", errWpp);
