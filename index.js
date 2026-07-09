@@ -724,7 +724,7 @@ client.on('message', async msg => {
                         "Status": "Agendado", "Telefone": userId 
                     }]);
                     await supabase.from('Disponibilidade').update({ Status: 'Ocupado' }).eq('id', userStates[userId].recordIdHorario);
-                    await responderComDigitando(chat, msg, `✅ Tudo certo, ${userStates[userId].nomeCliente}! Seu horário de *${userStates[userId].servicoEscolhido}* foi agendado com sucesso para the dia *${diaVisualFinal}*!\n\nO pagamento poderá ser feito diretamente na barbearia. Te esperamos às *${userStates[userId].horarioEscolhido}*! 👊`);
+                    await responderComDigitando(chat, msg, `✅ Tudo certo, ${userStates[userId].nomeCliente}! Seu horário de *${userStates[userId].servicoEscolhido}* foi agendado com sucesso para o dia *${diaVisualFinal}*!\n\nO pagamento poderá ser feito diretamente na barbearia. Te esperamos às *${userStates[userId].horarioEscolhido}*! 👊`);
                     await enviarComDigitando(chat, '📍 *Aqui está a nossa localização no Google Maps:* \n\nhttps://maps.app.goo.gl/kneNwDiQREA6GqUBA'); 
 
                     userStates[userId].lastBooking = Date.now();
