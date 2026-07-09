@@ -633,13 +633,13 @@ client.on('message', async msg => {
             userStates[userId].nomeCliente = msg.body;
             userStates[userId].step = 'choosing_payment_method';
             
-            await responderComDigitando(chat, msg, `Perfeito, *${userStates[userId].nomeCliente}*! Como você prefere realizar o pagamento?\n\n💵 *1.* Dinheiro (Pagar presencialmente na barbearia)\n⚡ *2.* Pix (Confirmação automática)\n💳 *3.* Cartão de Crédito (Via link seguro)\n\nDigite apenas o *número* correspondente à sua escolha:`);
+            await responderComDigitando(chat, msg, `Perfeito, *${userStates[userId].nomeCliente}*! Como você prefere realizar o pagamento?\n\n💵 *1.* Pagamento presencial na Barbearia (Dinheiro, Cartão de Crédito/Débito ou Pix)\n⚡ *2.* Pix (Pagamento Antecipado - Confirmação automática)\n💳 *3.* Cartão de Crédito (Pagamento Antecipado - Via link seguro)\n\nDigite apenas o *número* correspondente à sua escolha:`);
         }
 
         else if (userStates[userId].step === 'choosing_payment_method') {
             const opcaoPagamento = msg.body.trim();
             if (!['1', '2', '3'].includes(opcaoPagamento)) {
-                return responderComDigitando(chat, msg, '⚠️ Opção inválida. Escolha entre:\n1 para Dinheiro\n2 para Pix\n3 para Cartão de Crédito');
+                return responderComDigitando(chat, msg, '⚠️ Opção inválida. Escolha entre:\n1 para Pagamento presencial na Barbearia\n2 para Pix\n3 para Cartão de Crédito');
             }
 
             let agendamentoIdParaRollback = null;
@@ -792,7 +792,7 @@ client.on('message', async msg => {
     }
 });
 
-// 🌐 ROTA DE WEBHOOK DO MERCADO PAGO
+// 🌐 ROTA DE WEBHOOK DO MERCADO PAGO ATUALIZADA
 app.post('/webhook', async (req, res) => {
     console.log("📥 [Webhook] Recebi um aviso do Mercado Pago!");
     res.sendStatus(200);
@@ -808,6 +808,7 @@ app.post('/webhook', async (req, res) => {
         });
         const paymentData = await response.json();
 
+        // 🟢 CASO 1: PAGAMENTO APROVADO
         if (paymentData.status === 'approved') {
             const agendamentoId = paymentData.external_reference;
             const { data: agendamento } = await supabase.from('Agendamentos').select('*').eq('id', agendamentoId).single();
@@ -824,10 +825,40 @@ app.post('/webhook', async (req, res) => {
                     await chat.sendStateTyping();
                     await delay(1000); 
                     
-                    await client.sendMessage(telefoneCliente, `🎉 *Pagamento Confirmado!* \n\nPerfeito, ${nomeCliente}! Seu pagamento foi aprovado pelo Mercado Pago e o seu horário de *${servico}* está 100% confirmado para the dia *${diaVisual}* às *${horario}*.\n\nMuito obrigado! Estamos te esperando! 💈💈`);
+                    await client.sendMessage(telefoneCliente, `🎉 *Pagamento Confirmado!* \n\nPerfeito, ${nomeCliente}! Seu pagamento foi aprovado pelo Mercado Pago e o seu horário de *${servico}* está 100% confirmado para o dia *${diaVisual}* às *${horario}*.\n\nMuito obrigado! Estamos te esperando! 💈💈`);
                     await client.sendMessage(telefoneCliente, '📍 *Aqui está a nossa localização no Google Maps caso precise:* \n\nhttps://maps.app.goo.gl/kneNwDiQREA6GqUBA');
                 } catch (err) {
                     console.error("Erro ao enviar mensagem de webhook via whatsapp", err);
+                }
+            }
+        }
+        
+        // 🔴 CASO 2: PAGAMENTO RECUSADO/FALHOU (NOVA LÓGICA)
+        else if (paymentData.status === 'rejected') {
+            const agendamentoId = paymentData.external_reference;
+            const { data: agendamento } = await supabase.from('Agendamentos').select('*').eq('id', agendamentoId).single();
+            
+            if (agendamento && agendamento.Status === 'Aguardando Pagamento') {
+                // 1. Libera o horário na tabela de Disponibilidade
+                await supabase.from('Disponibilidade').update({ Status: 'Livre' }).eq('Horário', agendamento.Horário).eq('Data', agendamento.Data);
+                
+                // 2. Cancela o agendamento no banco
+                await supabase.from('Agendamentos').update({ Status: 'Cancelado' }).eq('id', agendamentoId);
+                
+                const telefoneCliente = agendamento.Telefone;
+                const nomeCliente = agendamento.Nome;
+                
+                console.log(`⚠️ [Webhook] Pagamento do cliente ${nomeCliente} foi recusado. Horário das ${agendamento.Horário} liberado.`);
+                
+                try {
+                    const chat = await client.getChatById(telefoneCliente);
+                    await chat.sendStateTyping();
+                    await delay(1000); 
+                    
+                    // 3. Avisa o cliente imediatamente no WhatsApp
+                    await client.sendMessage(telefoneCliente, `⚠️ *Ops, Pagamento Não Aprovado!*\n\nFala, ${nomeCliente}. O Mercado Pago nos informou que a sua tentativa de pagamento foi *recusada* (pode ser saldo insuficiente, cartão bloqueado ou dados incorretos).\n\nComo o pagamento falhou, sua reserva foi cancelada para liberar o horário. Caso queira tentar de novo com outro cartão, pix ou pagar no estabelecimento, basta mandar um *"Oi"* para reiniciar! 💈👊`);
+                } catch (errWpp) {
+                    console.error("Erro ao enviar mensagem de recusa via whatsapp", errWpp);
                 }
             }
         }
