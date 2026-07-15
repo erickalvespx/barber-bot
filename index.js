@@ -15,7 +15,7 @@ const PORT = process.env.PORT || 3000;
 // Variável para controlar se o WhatsApp está pronto para enviar mensagens
 let whatsappPronto = false;
 
-// 🛠️ PLANO B: Versão Congelada do WhatsApp Web
+// 🛠️ PLANO B: Versão Congelada do WhatsApp Web com Puppeteer Otimizado
 const client = new Client({
     authStrategy: new LocalAuth(),
     puppeteer: {
@@ -33,7 +33,7 @@ const client = new Client({
 });
 
 const userStates = {};
-const datasBloqueadas = ['2026-07-23', '2026-07-24']; // 📅 BLOQUEIO DE DATAS: Adicione aqui as datas que deseja fechar totalmente (Formato: AAAA-MM-DD)
+const datasBloqueadas = ['2026-07-23', '2026-07-24']; // 📅 BLOQUEIO DE DATAS (Formato: AAAA-MM-DD)
 let ultimaLimpezaDiaria = null; // TRAVA DE SEGURANÇA PARA A LIMPEZA DA MEIA-NOITE
 
 // ⏱️ FUNÇÃO AUXILIAR DE DELAY
@@ -46,7 +46,7 @@ function obterDataFormatada(diasAmais = 0) {
 }
 
 // 🛠️ FUNÇÃO AUXILIAR: GERAÇÃO SOB DEMANDA DE HORÁRIOS
-async function garantirHorariosDoDia(dataEscolhida, diaDaSemana) {
+async function garantizarHorariosDoDia(dataEscolhida, diaDaSemana) {
     try {
         const { data: registrosExistentes, error: erroBusca } = await supabase
             .from('Disponibilidade')
@@ -340,18 +340,27 @@ client.on('ready', () => {
     whatsappPronto = true;
 });
 
-// Evento de Mensagens Recebidas
+// Evento de Mensagens Recebidas - BLINDADO CONTRA CRASHES
 client.on('message', async msg => {
+    // 1. Tratamento preventivo para mensagens vazias ou de sistema
+    if (!msg || typeof msg !== 'object') return;
     if (msg.type !== 'chat') return;
 
     let chat;
     try {
-        chat = await msg.getChat();
+        // Envolvemos a obtenção do chat com um timeout para evitar travamentos
+        chat = await Promise.race([
+            msg.getChat(),
+            new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout ao obter chat')), 5000))
+        ]);
     } catch (errChat) {
-        console.error('Não foi possível obter a conversa no recebimento da mensagem:', errChat.message);
-        return;
+        // Apenas registra o erro como aviso sem deixar o bot reiniciar
+        console.warn(`⚠️ [Aviso] Não foi possível ler o chat desta mensagem: ${errChat.message || errChat}`);
+        return; 
     }
 
+    // 2. Verificações de segurança no chat obtido
+    if (!chat) return;
     if (chat.isGroup || msg.fromMe || msg.isBroadcast) return;
 
     const tempoAtual = Math.floor(Date.now() / 1000);
@@ -401,7 +410,7 @@ client.on('message', async msg => {
         userStates[userId].timeoutId = null;
     }
 
-    const text = msg.body.toLowerCase();
+    const text = msg.body ? msg.body.toLowerCase() : '';
     try {
         if (text === '#agenda') {
             const { data: barbeiro, error: authError } = await supabase
@@ -822,7 +831,7 @@ client.on('message', async msg => {
                     await supabase.from('Agendamentos').update({ ID_Pagamento_MP: String(dataMP.id) }).eq('id', agendamentoIdParaRollback);
                     await responderComDigitando(chat, msg, `⚡ Perfeito! Para confirmar seu horário do dia *${diaVisualFinal}* às *${userStates[userId].horarioEscolhido}*, utilize o código Pix Copia e Cola que estou enviando na mensagem abaixo 👇`);
                     await client.sendMessage(userId, pixCopiaCola);
-                    await enviarComDigitando(chat, `👆 *Copie apenas a mensagem acima*, abra o aplicativo do seu banco e use a option "Pix Copia e Cola". Nosso sistema identificará o pagamento e confirmará tudo em instantes!`);
+                    await enviarComDigitando(chat, `👆 *Copie apenas a mensagem acima*, abra o aplicativo do seu banco e use a opção "Pix Copia e Cola". Nosso sistema identificará o pagamento e confirmará tudo em instantes!`);
                     userStates[userId].step = 'idle';
                 }
 
@@ -889,6 +898,9 @@ client.on('message', async msg => {
     } finally {
         userStates[userId].processing = false;
         if (userStates[userId].step !== 'idle') {
+            // Removemos timeouts anteriores para este usuário antes de criar um novo
+            if (userStates[userId].timeoutId) clearTimeout(userStates[userId].timeoutId);
+            
             userStates[userId].timeoutId = setTimeout(async () => {
                 try {
                     if (userStates[userId].step !== 'idle') {
@@ -896,7 +908,7 @@ client.on('message', async msg => {
                         await enviarComDigitando(chat, "⏳ *Atendimento encerrado por inatividade!*\n\nComo ficamos muito tempo sem resposta, finalizei o seu atendimento para não congestionar o nosso sistema.\n\nQuando quiser agendar novamente, é só mandar um *'Oi'*! 💈");
                     }
                 } catch (err) {
-                    console.error(err);
+                    console.error('Falha no callback de inatividade:', err);
                 }
             }, 120000);
         }
@@ -976,7 +988,7 @@ app.post('/webhook', async (req, res) => {
 app.listen(PORT, () => {
     console.log(`🌐 Servidor Webhook rodando estavelmente na porta ${PORT}`);
     
-    // Inicia os loops automáticos apenas uma vez, pois o Express não reinicia
+    // Inicia os loops automáticos de segundo plano
     setInterval(() => {
         verificarEDispararLembretes();
         verificarEExpirarPagamentos();
