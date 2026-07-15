@@ -1,6 +1,4 @@
 require('dotenv').config();
-const { Client, LocalAuth } = require('whatsapp-web.js');
-const qrcode = require('qrcode-terminal');
 const express = require('express');
 const { createClient } = require('@supabase/supabase-js');
 
@@ -12,25 +10,10 @@ const app = express();
 app.use(express.json());
 const PORT = process.env.PORT || 3000;
 
-// Variável para controlar se o WhatsApp está pronto para enviar mensagens
-let whatsappPronto = false;
-
-// 🛠️ PLANO B: Versão Congelada do WhatsApp Web com Puppeteer Otimizado
-const client = new Client({
-    authStrategy: new LocalAuth(),
-    puppeteer: {
-        headless: true,
-        args: [
-            '--no-sandbox',
-            '--disable-setuid-sandbox',
-            '--disable-dev-shm-usage',
-            '--disable-accelerated-2d-canvas',
-            '--no-first-run',
-            '--no-zygote',
-            '--disable-gpu'
-        ]
-    }
-});
+// 🔑 CONFIGURAÇÕES DA EVOLUTION API (Ajuste aqui com os dados da sua instância)
+const EVOLUTION_URL = process.env.EVOLUTION_URL || "https://SEU_DOMINIO_EVOLUTION.com"; // Ex: http://seu-ip:8080
+const EVOLUTION_API_KEY = process.env.EVOLUTION_API_KEY || "SUA_API_KEY_AQUI";
+const INSTANCE_NAME = process.env.INSTANCE_NAME || "suainstancia"; // Nome da instância configurada na Evolution API
 
 const userStates = {};
 const datasBloqueadas = ['2026-07-23', '2026-07-24']; // 📅 BLOQUEIO DE DATAS (Formato: AAAA-MM-DD)
@@ -45,8 +28,35 @@ function obterDataFormatada(diasAmais = 0) {
     return dataAlvo.toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
 }
 
+// 📤 FUNÇÃO PRINCIPAL PARA ENVIAR MENSAGENS VIA EVOLUTION API (Substitui o Puppeteer)
+async function enviarMensagem(telefone, texto) {
+    const numeroLimpo = telefone.replace(/\D/g, ''); 
+    
+    try {
+        const response = await fetch(`${EVOLUTION_URL}/message/sendText/${INSTANCE_NAME}`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'apikey': EVOLUTION_API_KEY
+            },
+            body: JSON.stringify({
+                number: numeroLimpo,
+                text: texto,
+                delay: 1500, // Simula o "Digitando..." por 1.5s automaticamente na Evolution
+                linkPreview: false
+            })
+        });
+
+        if (!response.ok) {
+            console.error(`[Evolution] Falha ao enviar para ${numeroLimpo}:`, response.statusText);
+        }
+    } catch (err) {
+        console.error(`[Evolution] Erro de rede ao enviar para ${numeroLimpo}:`, err.message);
+    }
+}
+
 // 🛠️ FUNÇÃO AUXILIAR: GERAÇÃO SOB DEMANDA DE HORÁRIOS
-async function garantizarHorariosDoDia(dataEscolhida, diaDaSemana) {
+async function garantirHorariosDoDia(dataEscolhida, diaDaSemana) {
     try {
         const { data: registrosExistentes, error: erroBusca } = await supabase
             .from('Disponibilidade')
@@ -104,35 +114,8 @@ async function garantizarHorariosDoDia(dataEscolhida, diaDaSemana) {
     }
 }
 
-// 🤖 FUNÇÕES DE DIGITAÇÃO COM SEGURANÇA ADICIONAL
-async function responderComDigitando(chat, msg, texto) {
-    try {
-        await chat.sendStateTyping();
-        await delay(1000); 
-        return msg.reply(texto);
-    } catch (err) {
-        console.error('Falha ao enviar com digitando (reply):', err.message);
-        try { return msg.reply(texto); } catch (e) {}
-    }
-}
-
-async function enviarComDigitando(chat, texto) {
-    try {
-        await chat.sendStateTyping();
-        await delay(1000); 
-        return chat.sendMessage(texto);
-    } catch (err) {
-        console.error('Falha ao enviar com digitando (send):', err.message);
-        try { return chat.sendMessage(texto); } catch (e) {}
-    }
-}
-
 // ⏰ FUNÇÃO SEGUNDO PLANO (LEMBRETES DE AGENDAMENTO)
 async function verificarEDispararLembretes() {
-    if (!whatsappPronto) {
-        console.log('⏳ [Lembretes] Aguardando conexão ativa do WhatsApp...');
-        return;
-    }
     try {
         console.log('🔍 [Sistema] Verificando se há lembretes para enviar...');
         const dataHojeStr = obterDataFormatada(0);
@@ -164,12 +147,8 @@ async function verificarEDispararLembretes() {
 
             if (diferencaEmMinutos > 0 && diferencaEmMinutos <= 60) {
                 console.log(`📢 Enviando lembrete para ${nomeCliente} - Horário: ${horarioStr}`);
-                try {
-                    await client.sendMessage(telefoneCliente, `⏰ *Lembrete de Agendamento!* \n\nFala, ${nomeCliente}! Passando para lembrar que o seu horário de *${servicoCliente}* é daqui a pouco, às *${horarioStr}*.\n\nEstamos te esperando! 💈👊`);
-                    await supabase.from('Agendamentos').update({ Lembrete: true }).eq('id', reg.id);
-                } catch (err) {
-                    console.error(`❌ Erro ao enviar lembrete para ${nomeCliente}:`, err.message);
-                }
+                await enviarMensagem(telefoneCliente, `⏰ *Lembrete de Agendamento!* \n\nFala, ${nomeCliente}! Passando para lembrar que o seu horário de *${servicoCliente}* é daqui a pouco, às *${horarioStr}*.\n\nEstamos te esperando! 💈👊`);
+                await supabase.from('Agendamentos').update({ Lembrete: true }).eq('id', reg.id);
                 await delay(2000);
             }
         }
@@ -180,10 +159,6 @@ async function verificarEDispararLembretes() {
 
 // ⏳ FUNÇÃO SEGUNDO PLANO (EXPIRAÇÃO DE PIX/CARTÃO NÃO PAGOS)
 async function verificarEExpirarPagamentos() {
-    if (!whatsappPronto) {
-        console.log('⏳ [Expiração] Aguardando conexão ativa do WhatsApp...');
-        return;
-    }
     try {
         console.log('🔍 [Sistema] Verificando se há pagamentos pendentes expirados...');
         const { data: pendentes, error } = await supabase
@@ -205,11 +180,7 @@ async function verificarEExpirarPagamentos() {
             await supabase.from('Disponibilidade').update({ Status: 'Livre' }).eq('Horário', reg.Horário).eq('Data', reg.Data);
             await supabase.from('Agendamentos').update({ Status: 'Cancelado' }).eq('id', reg.id);
             if (reg.Telefone) {
-                try {
-                    await client.sendMessage(reg.Telefone, `⚠️ *Tempo Limite Expirado!*\n\nFala, ${reg.Nome}. Como o pagamento do Pix/Cartão não foi realizado nos últimos 10 minutos, o seu horário das *${reg.Horário}* foi cancelado automaticamente para liberar a vaga para outros clientes.\n\nCaso ainda queira realizar o serviço, basta mandar um *"Oi"* para reiniciar e escolher um novo horário! 💈👊`);
-                } catch (errWpp) {
-                    console.error('Erro ao enviar mensagem de expiração:', errWpp);
-                }
+                await enviarMensagem(reg.Telefone, `⚠️ *Tempo Limite Expirado!*\n\nFala, ${reg.Nome}. Como o pagamento do Pix/Cartão não foi realizado nos últimos 10 minutos, o seu horário das *${reg.Horário}* foi cancelado automaticamente para liberar a vaga para outros clientes.\n\nCaso ainda queira realizar o serviço, basta mandar um *"Oi"* para reiniciar e escolher um novo horário! 💈👊`);
             }
             await delay(2000);
         }
@@ -220,10 +191,6 @@ async function verificarEExpirarPagamentos() {
 
 // 💸 FUNÇÃO SEGUNDO PLANO (COBRANÇA DE MENSALIDADES)
 async function cobrarMensalidades() {
-    if (!whatsappPronto) {
-        console.log('⏳ [Mensalidades] Aguardando conexão ativa do WhatsApp...');
-        return;
-    }
     try {
         console.log('🔍 [Sistema] Verificando vencimento de mensalidades dos barbeiros...');
         const { data: registros, error } = await supabase
@@ -253,21 +220,17 @@ async function cobrarMensalidades() {
             const etapa = reg.Etapa_Cobranca || 'Nenhum';
             const chavePix = "88992135659";
 
-            try {
-                if (diffDays === 3 && etapa !== 'Aviso 3 Days') {
-                    await client.sendMessage(telefone, `Fala, ${nome}! Passando para lembrar que faltam 3 dias para o vencimento da sua mensalidade (R$ 177,00).\n\nQuando puder, é só enviar para a chave Pix: *${chavePix}* e me mandar o comprovante aqui! 💈`);
-                    await supabase.from('Barbeiros').update({ Etapa_Cobranca: 'Aviso 3 Days' }).eq('id', reg.id);
-                } 
-                else if (diffDays === 0 && etapa !== 'Aviso Vencimento') {
-                    await client.sendMessage(telefone, `Fala, ${nome}! Hoje é o dia do vencimento da sua mensalidade de R$ 177,00.\n\nSegue a chave Pix: *${chavePix}*. Assim que transferir, manda o comprovante pra gente dar baixa no sistema! 💈👊`);
-                    await supabase.from('Barbeiros').update({ Etapa_Cobranca: 'Aviso Vencimento' }).eq('id', reg.id);
-                }
-                else if (diffDays < 0 && diffDays >= -3 && etapa !== 'Atrasado' && reg.Status === 'Pendente') {
-                    await client.sendMessage(telefone, `⚠️ *Aviso de Atraso*\n\nFala, ${nome}. Identificamos que a sua mensalidade está pendente há ${Math.abs(diffDays)} dia(s).\n\nPara mantermos a parceria em dia, por favor, regularize o pagamento de R$ 177,00 na chave Pix: *${chavePix}*.`);
-                    await supabase.from('Barbeiros').update({ Etapa_Cobranca: 'Atrasado' }).eq('id', reg.id);
-                }
-            } catch (err) {
-                console.error(`❌ Erro ao enviar cobrança para ${nome}:`, err.message);
+            if (diffDays === 3 && etapa !== 'Aviso 3 Days') {
+                await enviarMensagem(telefone, `Fala, ${nome}! Passando para lembrar que faltam 3 dias para o vencimento da sua mensalidade (R$ 177,00).\n\nQuando puder, é só enviar para a chave Pix: *${chavePix}* e me mandar o comprovante aqui! 💈`);
+                await supabase.from('Barbeiros').update({ Etapa_Cobranca: 'Aviso 3 Days' }).eq('id', reg.id);
+            } 
+            else if (diffDays === 0 && etapa !== 'Aviso Vencimento') {
+                await enviarMensagem(telefone, `Fala, ${nome}! Hoje é o dia do vencimento da sua mensalidade de R$ 177,00.\n\nSegue a chave Pix: *${chavePix}*. Assim que transferir, manda o comprovante pra gente dar baixa no sistema! 💈👊`);
+                await supabase.from('Barbeiros').update({ Etapa_Cobranca: 'Aviso Vencimento' }).eq('id', reg.id);
+            }
+            else if (diffDays < 0 && diffDays >= -3 && etapa !== 'Atrasado' && reg.Status === 'Pendente') {
+                await enviarMensagem(telefone, `⚠️ *Aviso de Atraso*\n\nFala, ${nome}. Identificamos que a sua mensalidade está pendente há ${Math.abs(diffDays)} dia(s).\n\nPara mantermos a parceria em dia, por favor, regularize o pagamento de R$ 177,00 na chave Pix: *${chavePix}*.`);
+                await supabase.from('Barbeiros').update({ Etapa_Cobranca: 'Atrasado' }).eq('id', reg.id);
             }
             await delay(2000);
         }
@@ -322,52 +285,22 @@ async function resetarHorariosDiarios() {
     }
 }
 
-// Gerador de QR Code no terminal
-client.on('qr', (qr) => {
-    whatsappPronto = false;
-    qrcode.generate(qr, { small: true });
-});
+// 🚀 EVENTO DE MENSAGENS RECEBIDAS (WEBHOOK EVOLUTION API)
+app.post('/webhook-evolution', async (req, res) => {
+    res.sendStatus(200); // Responde rápido para a Evolution não reenviar a mesma requisição
 
-// Desconectado do WhatsApp
-client.on('disconnected', (reason) => {
-    console.log('❌ WhatsApp Desconectado! Motivo:', reason);
-    whatsappPronto = false;
-});
+    const payload = req.body;
+    
+    // Ignora eventos que não sejam novas mensagens ou mensagens enviadas pelo próprio bot
+    if (payload.event !== 'messages.upsert' || payload.data?.key?.fromMe === true) return;
 
-// Conectado com sucesso
-client.on('ready', () => {
-    console.log('✅ BarberSync: Conectado com sucesso ao WhatsApp!');
-    whatsappPronto = true;
-});
+    const messageData = payload.data;
+    const userId = messageData.key.remoteJid; // Captura o número do remetente
+    const textRaw = messageData.message?.conversation || messageData.message?.extendedTextMessage?.text || '';
+    const text = textRaw.toLowerCase().trim();
 
-// Evento de Mensagens Recebidas - BLINDADO CONTRA CRASHES
-client.on('message', async msg => {
-    // 1. Tratamento preventivo para mensagens vazias ou de sistema
-    if (!msg || typeof msg !== 'object') return;
-    if (msg.type !== 'chat') return;
-
-    let chat;
-    try {
-        // Envolvemos a obtenção do chat com um timeout para evitar travamentos
-        chat = await Promise.race([
-            msg.getChat(),
-            new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout ao obter chat')), 5000))
-        ]);
-    } catch (errChat) {
-        // Apenas registra o erro como aviso sem deixar o bot reiniciar
-        console.warn(`⚠️ [Aviso] Não foi possível ler o chat desta mensagem: ${errChat.message || errChat}`);
-        return; 
-    }
-
-    // 2. Verificações de segurança no chat obtido
-    if (!chat) return;
-    if (chat.isGroup || msg.fromMe || msg.isBroadcast) return;
-
-    const tempoAtual = Math.floor(Date.now() / 1000);
-    const diferencaTempo = tempoAtual - msg.timestamp;
-    if (diferencaTempo > 60) return;
-
-    const userId = msg.from;
+    // Se a mensagem for vazia (ex: imagem sem legenda, áudio, etc) ignora por enquanto
+    if (!textRaw || !userId) return;
 
     if (!userStates[userId]) {
         userStates[userId] = { 
@@ -410,7 +343,6 @@ client.on('message', async msg => {
         userStates[userId].timeoutId = null;
     }
 
-    const text = msg.body ? msg.body.toLowerCase() : '';
     try {
         if (text === '#agenda') {
             const { data: barbeiro, error: authError } = await supabase
@@ -438,7 +370,7 @@ client.on('message', async msg => {
                 .order('Horário', { ascending: true });
 
             if (errAg) {
-                await responderComDigitando(chat, msg, 'Erro ao carregar a agenda.');
+                await enviarMensagem(userId, 'Erro ao carregar a agenda.');
                 return;
             }
 
@@ -459,7 +391,7 @@ client.on('message', async msg => {
                 resposta += '\n';
             });
 
-            await responderComDigitando(chat, msg, resposta.trim());
+            await enviarMensagem(userId, resposta.trim());
             return;
         }
 
@@ -471,17 +403,17 @@ client.on('message', async msg => {
                     .eq('Telefone', userId)
                     .in('Status', ['Agendado', 'Aguardando Pagamento']);
 
-                if (!ags || ags.length === 0) return responderComDigitando(chat, msg, 'Você não possui agendamentos ativos para cancelar.');
+                if (!ags || ags.length === 0) return enviarMensagem(userId, 'Você não possui agendamentos ativos para cancelar.');
                 for (const ag of ags) {
                     await supabase.from('Disponibilidade').update({ Status: 'Livre' }).eq('Horário', ag.Horário).eq('Data', ag.Data);
                     await supabase.from('Agendamentos').update({ Status: 'Cancelado' }).eq('id', ag.id);
                 }
                 
-                await responderComDigitando(chat, msg, '✅ Agendamento cancelado com sucesso. O horário foi liberado.');
+                await enviarMensagem(userId, '✅ Agendamento cancelado com sucesso. O horário foi liberado.');
                 userStates[userId].step = 'idle';
                 userStates[userId].justCanceled = true; 
             } catch (e) { 
-                return responderComDigitando(chat, msg, 'Erro ao processar cancelamento.');
+                return enviarMensagem(userId, 'Erro ao processar cancelamento.');
             }
         }
 
@@ -492,9 +424,9 @@ client.on('message', async msg => {
             if (tempoPassado >= 5) userStates[userId].justCanceled = false;
             if (userStates[userId].lastBooking !== 0 && tempoPassado < 5) {
                 if (userStates[userId].justCanceled) {
-                    return responderComDigitando(chat, msg, `⚠️ Calma lá! Seu agendamento anterior foi cancelado, mas você ainda precisa aguardar mais ${Math.ceil(5 - tempoPassado)} minuto(s) para realizar um novo agendamento no sistema. 💈`);
+                    return enviarMensagem(userId, `⚠️ Calma lá! Seu agendamento anterior foi cancelado, mas você ainda precisa aguardar mais ${Math.ceil(5 - tempoPassado)} minuto(s) para realizar um novo agendamento no sistema. 💈`);
                 } else {
-                    return responderComDigitando(chat, msg, `⚠️ Calma lá! Aguarde mais ${Math.ceil(5 - tempoPassado)} minuto(s) para um novo agendamento, ou digite "cancelar" para desistir do seu horário atual.`);
+                    return enviarMensagem(userId, `⚠️ Calma lá! Aguarde mais ${Math.ceil(5 - tempoPassado)} minuto(s) para um novo agendamento, ou digite "cancelar" para desistir do seu horário atual.`);
                 }
             }
 
@@ -523,7 +455,7 @@ client.on('message', async msg => {
                             }
 
                             mensagemBase += `\n\n🤔 *Deseja agendar mais um horário?*\nVocê pode realizar até 2 agendamentos simultâneos por número.\n\n👍 *1.* Sim, quero fazer mais 1 agendamento\n❌ *2.* Não, quero cancelar meu agendamento atual`;
-                            return responderComDigitando(chat, msg, mensagemBase);
+                            return enviarMensagem(userId, mensagemBase);
                         } else {
                             userStates[userId].step = 'idle';
                             userStates[userId].lastBooking = Date.now();
@@ -533,14 +465,14 @@ client.on('message', async msg => {
                                 msgTexto += `\n📌 *${idx+1}.* ${ag.Serviço} - ${diaM} às ${ag.Horário} (${ag.Status})`;
                             });
                             msgTexto += `\n\nSe houver algum imprevisto e precisar desmarcar, basta digitar a palavra *"cancelar"* aqui a qualquer momento.`;
-                            return responderComDigitando(chat, msg, msgTexto);
+                            return enviarMensagem(userId, msgTexto);
                         }
                     }
 
                     const { data: configRecord } = await supabase.from('Configuracoes').select('*').limit(1);
                     if (configRecord && configRecord.length > 0) {
                         if (configRecord[0].Modo_Ausente) {
-                            await responderComDigitando(chat, msg, configRecord[0].Mensagem_Ausencia || '💈 Olá! No momento estamos ausentes e não estamos recebendo agendamentos. Voltaremos em breve!');
+                            await enviarMensagem(userId, configRecord[0].Mensagem_Ausencia || '💈 Olá! No momento estamos ausentes e não estamos recebendo agendamentos. Voltaremos em breve!');
                             userStates[userId].step = 'idle';
                             return;
                         }
@@ -567,22 +499,22 @@ client.on('message', async msg => {
                     };
 
                     userStates[userId].step = 'choosing_date';
-                    await responderComDigitando(chat, msg, `💈 *Bem-vindo à barbearia Duas Faces!*\n\nPara quando você deseja agendar o seu horário?\n\n${obterLinhaData(dataHoje, 'Hoje', 1)}\n${obterLinhaData(dataAmanha, 'Amanhã', 2)}\n${obterLinhaData(dataDepois, 'Depois de Amanhã', 3)}\n\nDigite apenas o *número* da opção desejada:`);
+                    await enviarMensagem(userId, `💈 *Bem-vindo à barbearia Duas Faces!*\n\nPara quando você deseja agendar o seu horário?\n\n${obterLinhaData(dataHoje, 'Hoje', 1)}\n${obterLinhaData(dataAmanha, 'Amanhã', 2)}\n${obterLinhaData(dataDepois, 'Depois de Amanhã', 3)}\n\nDigite apenas o *número* da opção desejada:`);
                 } catch (error) {
                     console.error(error);
-                    await responderComDigitando(chat, msg, 'Erro ao acessar o sistema. Tente novamente.');
+                    await enviarMensagem(userId, 'Erro ao acessar o sistema. Tente novamente.');
                     userStates[userId].step = 'idle';
                 }
             }
         } 
         
         else if (userStates[userId].step === 'choosing_multi_action') {
-            const opcao = msg.body.trim();
+            const opcao = textRaw.trim();
             if (opcao === '1') {
                 const { data: configRecord } = await supabase.from('Configuracoes').select('*').limit(1);
                 if (configRecord && configRecord.length > 0) {
                     if (configRecord[0].Modo_Ausente) {
-                        await responderComDigitando(chat, msg, configRecord[0].Mensagem_Ausencia || '💈 Olá! No momento estamos ausentes e não estamos recebendo agendamentos. Voltaremos em breve!');
+                        await enviarMensagem(userId, configRecord[0].Mensagem_Ausencia || '💈 Olá! No momento estamos ausentes e não estamos recebendo agendamentos. Voltaremos em breve!');
                         userStates[userId].step = 'idle';
                         return;
                     }
@@ -608,7 +540,7 @@ client.on('message', async msg => {
                 };
 
                 userStates[userId].step = 'choosing_date';
-                await responderComDigitando(chat, msg, `💈 *Bem-vindo à barbearia Duas Faces!*\n\nPara quando você deseja agendar o seu horário?\n\n${obterLinhaData(dataHoje, 'Hoje', 1)}\n${obterLinhaData(dataAmanha, 'Amanhã', 2)}\n${obterLinhaData(dataDepois, 'Depois de Amanhã', 3)}\n\nDigite apenas o *número* da opção desejada:`);
+                await enviarMensagem(userId, `💈 *Bem-vindo à barbearia Duas Faces!*\n\nPara quando você deseja agendar o seu horário?\n\n${obterLinhaData(dataHoje, 'Hoje', 1)}\n${obterLinhaData(dataAmanha, 'Amanhã', 2)}\n${obterLinhaData(dataDepois, 'Depois de Amanhã', 3)}\n\nDigite apenas o *número* da opção desejada:`);
             } else if (opcao === '2') {
                 try {
                     const { data: ags } = await supabase
@@ -617,32 +549,32 @@ client.on('message', async msg => {
                         .eq('Telefone', userId)
                         .in('Status', ['Agendado', 'Aguardando Pagamento']);
 
-                    if (!ags || ags.length === 0) return responderComDigitando(chat, msg, 'Você não possui agendamentos ativos para cancelar.');
+                    if (!ags || ags.length === 0) return enviarMensagem(userId, 'Você não possui agendamentos ativos para cancelar.');
                     for (const ag of ags) {
                         await supabase.from('Disponibilidade').update({ Status: 'Livre' }).eq('Horário', ag.Horário).eq('Data', ag.Data);
                         await supabase.from('Agendamentos').update({ Status: 'Cancelado' }).eq('id', ag.id);
                     }
                     
-                    await responderComDigitando(chat, msg, '✅ Agendamento cancelado com sucesso. O horário foi liberado.');
+                    await enviarMensagem(userId, '✅ Agendamento cancelado com sucesso. O horário foi liberado.');
                     userStates[userId].step = 'idle';
                     userStates[userId].justCanceled = true; 
                 } catch (e) { 
-                    return responderComDigitando(chat, msg, 'Erro ao processar cancelamento.');
+                    return enviarMensagem(userId, 'Erro ao processar cancelamento.');
                 }
             } else {
-                return responderComDigitando(chat, msg, '⚠️ Opção inválida. Digite *1* para fazer um novo agendamento ou *2* para cancelar o agendamento atual.');
+                return enviarMensagem(userId, '⚠️ Opção inválida. Digite *1* para fazer um novo agendamento ou *2* para cancelar o agendamento atual.');
             }
         }
 
         else if (userStates[userId].step === 'choosing_date') {
-            const opcaoData = msg.body.trim();
+            const opcaoData = textRaw.trim();
             const dataEscolhida = userStates[userId].diasDisponiveis ? userStates[userId].diasDisponiveis[opcaoData] : null;
 
-            if (!dataEscolhida) return responderComDigitando(chat, msg, '⚠️ Opção inválida. Digite 1 para Hoje, 2 para Amanhã ou 3 para Depois de Amanhã.');
+            if (!dataEscolhida) return enviarMensagem(userId, '⚠️ Opção inválida. Digite 1 para Hoje, 2 para Amanhã ou 3 para Depois de Amanhã.');
 
             // 🚫 VERIFICAÇÃO DE DATA BLOQUEADA
             if (datasBloqueadas.includes(dataEscolhida)) {
-                await responderComDigitando(chat, msg, '💈 Olá! Esta data está indisponível pois não teremos expediente na barbearia neste dia. Por favor, envie um *"Oi"* para reiniciar e escolher outro dia! 👊');
+                await enviarMensagem(userId, '💈 Olá! Esta data está indisponível pois não teremos expediente na barbearia neste dia. Por favor, envie um *"Oi"* para reiniciar e escolher outro dia! 👊');
                 userStates[userId].step = 'idle';
                 return;
             }
@@ -654,7 +586,7 @@ client.on('message', async msg => {
                 const diaDaSemana = dataObj.getDay();
 
                 if (diaDaSemana === 0) {
-                    await responderComDigitando(chat, msg, '💈 Olá! A barbearia não abre aos domingos para descanso. Por favor, mande um "Oi" novamente e escolha outro dia! 👊');
+                    await enviarMensagem(userId, '💈 Olá! A barbearia não abre aos domingos para descanso. Por favor, mande um "Oi" novamente e escolha outro dia! 👊');
                     userStates[userId].step = 'idle';
                     return;
                 }
@@ -672,7 +604,7 @@ client.on('message', async msg => {
                 }) : [];
 
                 if (registrosValidos.length === 0) {
-                    await responderComDigitando(chat, msg, '🛑 Não temos mais horários livres disponíveis para o dia selecionado. Caso deseje, digite *"Oi"* para escolher outro dia! 💈');
+                    await enviarMensagem(userId, '🛑 Não temos mais horários livres disponíveis para o dia selecionado. Caso deseje, digite *"Oi"* para escolher outro dia! 💈');
                     userStates[userId].step = 'idle';
                 } else {
                     userStates[userId].horariosDisponiveis = {};
@@ -685,20 +617,20 @@ client.on('message', async msg => {
                     });
                     
                     userStates[userId].step = 'choosing_time';
-                    await responderComDigitando(chat, msg, `Perfeito! Veja os horários ainda disponíveis para esta data:\n\n${listaHorariosFormatada}\nPor favor, digite apenas o *número* do horário desejado:`);
+                    await enviarMensagem(userId, `Perfeito! Veja os horários ainda disponíveis para esta data:\n\n${listaHorariosFormatada}\nPor favor, digite apenas o *número* do horário desejado:`);
                 }
             } catch (error) {
                 console.error(error);
-                await responderComDigitando(chat, msg, 'Erro ao carregar horários deste dia. Mande "oi" para recomeçar.');
+                await enviarMensagem(userId, 'Erro ao carregar horários deste dia. Mande "oi" para recomeçar.');
                 userStates[userId].step = 'idle';
             }
         }
 
         else if (userStates[userId].step === 'choosing_time') {
-            const opcaoDigitada = msg.body.trim();
+            const opcaoDigitada = textRaw.trim();
             const choice = userStates[userId].horariosDisponiveis ? userStates[userId].horariosDisponiveis[opcaoDigitada] : null;
 
-            if (!choice) return responderComDigitando(chat, msg, '⚠️ Opção inválida.');
+            if (!choice) return enviarMensagem(userId, '⚠️ Opção inválida.');
 
             userStates[userId].horarioEscolhido = choice.hora;
             userStates[userId].recordIdHorario = choice.id; 
@@ -717,18 +649,18 @@ client.on('message', async msg => {
                 }
                 
                 userStates[userId].step = 'choosing_service';
-                await responderComDigitando(chat, msg, `Boa! Horário das ${choice.hora} pré-reservado.\n\nQual serviço você gostaria de fazer?\n\n${menuServicos}\nDigite apenas o *número* da opção desejada:`);
+                await enviarMensagem(userId, `Boa! Horário das ${choice.hora} pré-reservado.\n\nQual serviço você gostaria de fazer?\n\n${menuServicos}\nDigite apenas o *número* da opção desejada:`);
             } catch (error) {
-                await responderComDigitando(chat, msg, 'Erro ao carregar os serviços. Envie "oi" para reiniciar.');
+                await enviarMensagem(userId, 'Erro ao carregar os serviços. Envie "oi" para reiniciar.');
                 userStates[userId].step = 'idle';
             }
         }
 
         else if (userStates[userId].step === 'choosing_service') {
-            const opcao = msg.body.trim();
+            const opcao = textRaw.trim();
             const choiceServico = userStates[userId].servicosDisponiveis ? userStates[userId].servicosDisponiveis[opcao] : null;
             
-            if (!choiceServico) return responderComDigitando(chat, msg, '⚠️ Opção inválida.');
+            if (!choiceServico) return enviarMensagem(userId, '⚠️ Opção inválida.');
 
             userStates[userId].nomeServicoPuro = choiceServico.nome;
             userStates[userId].precoServicoPuro = choiceServico.preco;
@@ -737,44 +669,44 @@ client.on('message', async msg => {
             userStates[userId].step = 'confirming_time_and_service';
             
             const diaVisual = userStates[userId].dataSelecionada.split('-').reverse().slice(0,2).join('/');
-            await responderComDigitando(chat, msg, `Resumo do seu agendamento:\n📅 Data: *${diaVisual}*\n⏰ Horário: *${userStates[userId].horarioEscolhido}*\n✂️ Serviço: *${choiceServico.nome}*\n\nEstá correto?\n\n👍 *1.* Sim\n🔄 *2.* Não (Refazer escolha)`);
+            await enviarMensagem(userId, `Resumo do seu agendamento:\n📅 Data: *${diaVisual}*\n⏰ Horário: *${userStates[userId].horarioEscolhido}*\n✂️ Serviço: *${choiceServico.nome}*\n\nEstá correto?\n\n👍 *1.* Sim\n🔄 *2.* Não (Refazer escolha)`);
         }
 
         else if (userStates[userId].step === 'confirming_time_and_service') {
-            const opcaoConfirmacao = msg.body.trim();
+            const opcaoConfirmacao = textRaw.trim();
             if (opcaoConfirmacao === '1' || opcaoConfirmacao.toLowerCase() === 'sim') {
                 userStates[userId].step = 'asking_name';
-                await responderComDigitando(chat, msg, `Excelente! Agora, qual o seu *NOME E SOBRENOME* para avançarmos?`);
+                await enviarMensagem(userId, `Excelente! Agora, qual o seu *NOME E SOBRENOME* para avançarmos?`);
             } 
             else if (opcaoConfirmacao === '2' || opcaoConfirmacao.toLowerCase() === 'não' || opcaoConfirmacao.toLowerCase() === 'nao') {
                 userStates[userId].step = 'idle';
-                await responderComDigitando(chat, msg, `Sem problemas! Vamos recomeçar do zero para você escolher certinho.\n\nPor favor, digite *"agendar"* para eu carregar os horários atualizados! 💈`);
+                await enviarMensagem(userId, `Sem problemas! Vamos recomeçar do zero para você escolher certinho.\n\nPor favor, digite *"agendar"* para eu carregar os horários atualizados! 💈`);
             } 
             else {
-                return responderComDigitando(chat, msg, '⚠️ Opção inválida. Digite *1* para confirmar ou *2* para refazer sua escolha.');
+                return enviarMensagem(userId, '⚠️ Opção inválida. Digite *1* para confirmar ou *2* para refazer sua escolha.');
             }
         }
 
         else if (userStates[userId].step === 'asking_name') {
-            userStates[userId].nomeCliente = msg.body;
+            userStates[userId].nomeCliente = textRaw;
             userStates[userId].step = 'choosing_payment_method';
             
-            await responderComDigitando(chat, msg, `Perfeito, *${userStates[userId].nomeCliente}*! Como você prefere realizar o pagamento?\n\n💵 *1.* Pagamento presencial na Barbearia (Dinheiro, Cartão de Crédito/Débito ou Pix)\n⚡ *2.* Pix (Pagamento Antecipado - Confirmação automática)\n💳 *3.* Cartão de Crédito (Pagamento Antecipado - Via link seguro)\n\nDigite apenas o *número* correspondente à sua escolha:`);
+            await enviarMensagem(userId, `Perfeito, *${userStates[userId].nomeCliente}*! Como você prefere realizar o pagamento?\n\n💵 *1.* Pagamento presencial na Barbearia (Dinheiro, Cartão de Crédito/Débito ou Pix)\n⚡ *2.* Pix (Pagamento Antecipado - Confirmação automática)\n💳 *3.* Cartão de Crédito (Pagamento Antecipado - Via link seguro)\n\nDigite apenas o *número* correspondente à sua escolha:`);
         }
 
         else if (userStates[userId].step === 'choosing_payment_method') {
-            const opcaoPagamento = msg.body.trim();
+            const opcaoPagamento = textRaw.trim();
             if (!['1', '2', '3'].includes(opcaoPagamento)) {
-                return responderComDigitando(chat, msg, '⚠️ Opção inválida. Escolha entre:\n1 para Pagamento presencial na Barbearia\n2 para Pix\n3 para Cartão de Crédito');
+                return enviarMensagem(userId, '⚠️ Opção inválida. Escolha entre:\n1 para Pagamento presencial na Barbearia\n2 para Pix\n3 para Cartão de Crédito');
             }
 
             let agendamentoIdParaRollback = null;
             try {
-                await responderComDigitando(chat, msg, '⏳ Verificando disponibilidade e preparando o sistema...');
+                await enviarMensagem(userId, '⏳ Verificando disponibilidade e preparando o sistema...');
                 const { data: checagemAtual } = await supabase.from('Disponibilidade').select('Status').eq('id', userStates[userId].recordIdHorario).single();
                 
                 if (!checagemAtual || checagemAtual.Status !== 'Livre') {
-                    await responderComDigitando(chat, msg, `🛑 *Ops!* Outro cliente acabou de finalizar uma reserva nesse mesmo horário. Envie "oi" para recomeçar!`);
+                    await enviarMensagem(userId, `🛑 *Ops!* Outro cliente acabou de finalizar uma reserva nesse mesmo horário. Envie "oi" para recomeçar!`);
                     userStates[userId].step = 'idle';
                     return;
                 }
@@ -790,8 +722,8 @@ client.on('message', async msg => {
                         "Status": "Agendado", "Telefone": userId 
                     }]);
                     await supabase.from('Disponibilidade').update({ Status: 'Ocupado' }).eq('id', userStates[userId].recordIdHorario);
-                    await responderComDigitando(chat, msg, `✅ Tudo certo, ${userStates[userId].nomeCliente}! Seu horário de *${userStates[userId].servicoEscolhido}* foi agendado com sucesso para o dia *${diaVisualFinal}*!\n\nO pagamento poderá ser feito diretamente na barbearia. Te esperamos às *${userStates[userId].horarioEscolhido}*! 👊`);
-                    await enviarComDigitando(chat, '📍 *Aqui está a nossa localização no Google Maps:* \n\nhttps://maps.app.goo.gl/kneNwDiQREA6GqUBA'); 
+                    await enviarMensagem(userId, `✅ Tudo certo, ${userStates[userId].nomeCliente}! Seu horário de *${userStates[userId].servicoEscolhido}* foi agendado com sucesso para o dia *${diaVisualFinal}*!\n\nO pagamento poderá ser feito diretamente na barbearia. Te esperamos às *${userStates[userId].horarioEscolhido}*! 👊`);
+                    await enviarMensagem(userId, '📍 *Aqui está a nossa localização no Google Maps:* \n\nhttps://maps.app.goo.gl/kneNwDiQREA6GqUBA'); 
 
                     userStates[userId].lastBooking = Date.now();
                     userStates[userId].step = 'idle';
@@ -829,9 +761,9 @@ client.on('message', async msg => {
                     console.log(`⚡ [Sistema] Código Pix gerado com sucesso para o cliente: ${userStates[userId].nomeCliente}`);
                     
                     await supabase.from('Agendamentos').update({ ID_Pagamento_MP: String(dataMP.id) }).eq('id', agendamentoIdParaRollback);
-                    await responderComDigitando(chat, msg, `⚡ Perfeito! Para confirmar seu horário do dia *${diaVisualFinal}* às *${userStates[userId].horarioEscolhido}*, utilize o código Pix Copia e Cola que estou enviando na mensagem abaixo 👇`);
-                    await client.sendMessage(userId, pixCopiaCola);
-                    await enviarComDigitando(chat, `👆 *Copie apenas a mensagem acima*, abra o aplicativo do seu banco e use a opção "Pix Copia e Cola". Nosso sistema identificará o pagamento e confirmará tudo em instantes!`);
+                    await enviarMensagem(userId, `⚡ Perfeito! Para confirmar seu horário do dia *${diaVisualFinal}* às *${userStates[userId].horarioEscolhido}*, utilize o código Pix Copia e Cola que estou enviando na mensagem abaixo 👇`);
+                    await enviarMensagem(userId, pixCopiaCola);
+                    await enviarMensagem(userId, `👆 *Copie apenas a mensagem acima*, abra o aplicativo do seu banco e use a opção "Pix Copia e Cola". Nosso sistema identificará o pagamento e confirmará tudo em instantes!`);
                     userStates[userId].step = 'idle';
                 }
 
@@ -874,7 +806,7 @@ client.on('message', async msg => {
                     console.log(`💳 [Sistema] Link de Cartão gerado com sucesso para o cliente: ${userStates[userId].nomeCliente}`);
                     
                     await supabase.from('Agendamentos').update({ ID_Pagamento_MP: String(dataMP.id) }).eq('id', agendamentoIdParaRollback);
-                    await responderComDigitando(chat, msg, `💳 Excelente! Clique no link seguro abaixo para realizar o pagamento com seu Cartão de Crédito:\n\n${linkCartao}\n\nAssim que o pagamento for aprovado, o sistema atualizará o seu horário automaticamente!`);
+                    await enviarMensagem(userId, `💳 Excelente! Clique no link seguro abaixo para realizar o pagamento com seu Cartão de Crédito:\n\n${linkCartao}\n\nAssim que o pagamento for aprovado, o sistema atualizará o seu horário automaticamente!`);
                     userStates[userId].step = 'idle';
                 }
 
@@ -889,7 +821,7 @@ client.on('message', async msg => {
                     }
                 }
 
-                await responderComDigitando(chat, msg, '⚠️ Houve um problema de comunicação com o sistema de pagamento e sua vaga não foi reservada.\n\nFique tranquilo, o horário foi liberado novamente. Por favor, digite "agendar" e tente de novo.');
+                await enviarMensagem(userId, '⚠️ Houve um problema de comunicação com o sistema de pagamento e sua vaga não foi reservada.\n\nFique tranquilo, o horário foi liberado novamente. Por favor, digite "agendar" e tente de novo.');
                 userStates[userId].step = 'idle';
             }
         }
@@ -898,14 +830,13 @@ client.on('message', async msg => {
     } finally {
         userStates[userId].processing = false;
         if (userStates[userId].step !== 'idle') {
-            // Removemos timeouts anteriores para este usuário antes de criar um novo
             if (userStates[userId].timeoutId) clearTimeout(userStates[userId].timeoutId);
             
             userStates[userId].timeoutId = setTimeout(async () => {
                 try {
                     if (userStates[userId].step !== 'idle') {
                         userStates[userId].step = 'idle';
-                        await enviarComDigitando(chat, "⏳ *Atendimento encerrado por inatividade!*\n\nComo ficamos muito tempo sem resposta, finalizei o seu atendimento para não congestionar o nosso sistema.\n\nQuando quiser agendar novamente, é só mandar um *'Oi'*! 💈");
+                        await enviarMensagem(userId, "⏳ *Atendimento encerrado por inatividade!*\n\nComo ficamos muito tempo sem resposta, finalizei o seu atendimento para não congestionar o nosso sistema.\n\nQuando quiser agendar novamente, é só mandar um *'Oi'*! 💈");
                     }
                 } catch (err) {
                     console.error('Falha no callback de inatividade:', err);
@@ -944,15 +875,11 @@ app.post('/webhook', async (req, res) => {
                 const servico = agendamento.Serviço;
                 const diaVisual = agendamento.Data.split('-').reverse().join('/');
                 
-                if (whatsappPronto) {
-                    try {
-                        await client.sendMessage(telefoneCliente, `🎉 *Pagamento Confirmado!* \n\nPerfeito, ${nomeCliente}! Seu pagamento foi aprovado pelo Mercado Pago e o seu horário de *${servico}* está 100% confirmado para o dia *${diaVisual}* às *${horario}*.\n\nMuito obrigado! Estamos te esperando! 💈💈`);
-                        await client.sendMessage(telefoneCliente, '📍 *Aqui está a nossa localização no Google Maps caso precise:* \n\nhttps://maps.app.goo.gl/kneNwDiQREA6GqUBA');
-                    } catch (err) {
-                        console.error("Erro ao enviar mensagem de webhook via whatsapp", err);
-                    }
-                } else {
-                    console.log(`[Webhook] Pagamento de ${nomeCliente} aprovado, mas o WhatsApp não estava pronto para notificar.`);
+                try {
+                    await enviarMensagem(telefoneCliente, `🎉 *Pagamento Confirmado!* \n\nPerfeito, ${nomeCliente}! Seu pagamento foi aprovado pelo Mercado Pago e o seu horário de *${servico}* está 100% confirmado para o dia *${diaVisual}* às *${horario}*.\n\nMuito obrigado! Estamos te esperando! 💈💈`);
+                    await enviarMensagem(telefoneCliente, '📍 *Aqui está a nossa localização no Google Maps caso precise:* \n\nhttps://maps.app.goo.gl/kneNwDiQREA6GqUBA');
+                } catch (err) {
+                    console.error("Erro ao enviar mensagem de webhook via API", err);
                 }
             }
         }
@@ -970,23 +897,21 @@ app.post('/webhook', async (req, res) => {
                 const nomeCliente = agendamento.Nome;
                 console.log(`⚠️ [Webhook] Pagamento do cliente ${nomeCliente} foi recusado. Horário das ${agendamento.Horário} liberado.`);
                 
-                if (whatsappPronto) {
-                    try {
-                        await client.sendMessage(telefoneCliente, `⚠️ *Ops, Pagamento Não Aprovado!*\n\nFala, ${nomeCliente}. O Mercado Pago nos informou que a sua tentativa de pagamento foi *recusada* (pode ser saldo insuficiente, cartão bloqueado ou dados incorretos).\n\nComo o pagamento falhou, sua reserva foi cancelada para liberar o horário. Caso queira tentar de novo com outro cartão, pix ou pagar no estabelecimento, basta mandar um *"Oi"* para reiniciar! 💈👊`);
-                    } catch (errWpp) {
-                        console.error("Erro ao enviar mensagem de recusa via whatsapp", errWpp);
-                    }
+                try {
+                    await enviarMensagem(telefoneCliente, `⚠️ *Ops, Pagamento Não Aprovado!*\n\nFala, ${nomeCliente}. O Mercado Pago nos informou que a sua tentativa de pagamento foi *recusada* (pode ser saldo insuficiente, cartão bloqueado ou dados incorretos).\n\nComo o pagamento falhou, sua reserva foi cancelada para liberar o horário. Caso queira tentar de novo com outro cartão, pix ou pagar no estabelecimento, basta mandar um *"Oi"* para reiniciar! 💈👊`);
+                } catch (errWpp) {
+                    console.error("Erro ao enviar mensagem de recusa via API", errWpp);
                 }
             }
         }
     } catch (error) {
-        console.error("❌ Erro ao processar o Webhook:", error);
+        console.error("❌ Erro ao processar o Webhook do Mercado Pago:", error);
     }
 });
 
 // Inicializa o servidor Express APENAS uma vez ao iniciar o arquivo
 app.listen(PORT, () => {
-    console.log(`🌐 Servidor Webhook rodando estavelmente na porta ${PORT}`);
+    console.log(`🌐 Servidor Evolution Webhook rodando lindamente na porta ${PORT}`);
     
     // Inicia os loops automáticos de segundo plano
     setInterval(() => {
@@ -998,7 +923,4 @@ app.listen(PORT, () => {
     setInterval(() => {
         cobrarMensalidades();
     }, 7200000); // Executa a cada 2 horas
-    
-    // Inicializa o cliente do WhatsApp Web
-    client.initialize();
 });
