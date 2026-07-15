@@ -13,14 +13,10 @@ app.use(express.json());
 const PORT = process.env.PORT || 3000;
 
 // 🛠️ PLANO B: Versão Congelada do WhatsApp Web
-const client = new Client({
+const client = new Client({ 
     authStrategy: new LocalAuth(),
     puppeteer: {
         args: ['--no-sandbox', '--disable-setuid-sandbox']
-    },
-    webVersionCache: {
-        type: 'remote',
-        remotePath: 'https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/2.3000.1014111623-alpha.html'
     }
 });
 
