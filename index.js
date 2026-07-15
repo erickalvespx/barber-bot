@@ -12,6 +12,9 @@ const app = express();
 app.use(express.json());
 const PORT = process.env.PORT || 3000;
 
+// Variável para controlar se o WhatsApp está pronto para enviar mensagens
+let whatsappPronto = false;
+
 // 🛠️ PLANO B: Versão Congelada do WhatsApp Web
 const client = new Client({
     authStrategy: new LocalAuth(),
@@ -44,73 +47,92 @@ function obterDataFormatada(diasAmais = 0) {
 
 // 🛠️ FUNÇÃO AUXILIAR: GERAÇÃO SOB DEMANDA DE HORÁRIOS
 async function garantirHorariosDoDia(dataEscolhida, diaDaSemana) {
-    const { data: registrosExistentes, error: erroBusca } = await supabase
-        .from('Disponibilidade')
-        .select('*')
-        .eq('Data', dataEscolhida)
-        .order('Horário', { ascending: true });
+    try {
+        const { data: registrosExistentes, error: erroBusca } = await supabase
+            .from('Disponibilidade')
+            .select('*')
+            .eq('Data', dataEscolhida)
+            .order('Horário', { ascending: true });
 
-    if (erroBusca) {
-        console.error('Erro ao buscar horários:', erroBusca);
+        if (erroBusca) {
+            console.error('Erro ao buscar horários:', erroBusca);
+            return [];
+        }
+
+        if (registrosExistentes && registrosExistentes.length > 0) {
+            return registrosExistentes;
+        }
+
+        console.log(`[Sistema] Gerando horários sob demanda para a data ${dataEscolhida}...`);
+        
+        let horariosPadrao = [];
+        if (diaDaSemana >= 1 && diaDaSemana <= 5) { 
+            horariosPadrao = [
+                '08:00', '08:30', '09:00', '09:30', '10:00', '10:30', '11:00', '11:30',
+                '14:00', '14:30', '15:00', '15:30', '16:00', '16:30', '17:00', '17:30', '18:00', '18:30', '19:00', '19:30'
+            ];
+        } else if (diaDaSemana === 6) { 
+            horariosPadrao = [
+                '08:00', '08:30', '09:00', '09:30', '10:00', '10:30', '11:00', '11:30',
+                '13:00', '13:30', '14:00', '14:30', '15:00', '15:30', '16:00', '16:30', '17:00', '17:30'
+            ];
+        } else {
+            return [];
+        }
+
+        const novosRegistros = horariosPadrao.map(hora => ({
+            "Horário": hora,
+            "Status": "Livre",
+            "Data": dataEscolhida
+        }));
+
+        const { data: registrosInseridos, error: erroInsert } = await supabase
+            .from('Disponibilidade')
+            .insert(novosRegistros)
+            .select()
+            .order('Horário', { ascending: true });
+
+        if (erroInsert) {
+            console.error('Erro ao injetar horários sob demanda:', erroInsert);
+            return [];
+        }
+
+        return registrosInseridos;
+    } catch (e) {
+        console.error('Erro geral no gerador de horários:', e);
         return [];
     }
-
-    if (registrosExistentes && registrosExistentes.length > 0) {
-        return registrosExistentes;
-    }
-
-    console.log(`[Sistema] Gerando horários sob demanda para a data ${dataEscolhida}...`);
-    
-    let horariosPadrao = [];
-    if (diaDaSemana >= 1 && diaDaSemana <= 5) { 
-        horariosPadrao = [
-            '08:00', '08:30', '09:00', '09:30', '10:00', '10:30', '11:00', '11:30',
-            '14:00', '14:30', '15:00', '15:30', '16:00', '16:30', '17:00', '17:30', '18:00', '18:30', '19:00', '19:30'
-        ];
-    } else if (diaDaSemana === 6) { 
-        horariosPadrao = [
-            '08:00', '08:30', '09:00', '09:30', '10:00', '10:30', '11:00', '11:30',
-            '13:00', '13:30', '14:00', '14:30', '15:00', '15:30', '16:00', '16:30', '17:00', '17:30'
-        ];
-    } else {
-        return [];
-    }
-
-    const novosRegistros = horariosPadrao.map(hora => ({
-        "Horário": hora,
-        "Status": "Livre",
-        "Data": dataEscolhida
-    }));
-
-    const { data: registrosInseridos, error: erroInsert } = await supabase
-        .from('Disponibilidade')
-        .insert(novosRegistros)
-        .select()
-        .order('Horário', { ascending: true });
-
-    if (erroInsert) {
-        console.error('Erro ao injetar horários sob demanda:', erroInsert);
-        return [];
-    }
-
-    return registrosInseridos;
 }
 
-// 🤖 FUNÇÕES DE DIGITAÇÃO
+// 🤖 FUNÇÕES DE DIGITAÇÃO COM SEGURANÇA ADICIONAL
 async function responderComDigitando(chat, msg, texto) {
-    await chat.sendStateTyping();
-    await delay(1000); 
-    return msg.reply(texto);
+    try {
+        await chat.sendStateTyping();
+        await delay(1000); 
+        return msg.reply(texto);
+    } catch (err) {
+        console.error('Falha ao enviar com digitando (reply):', err.message);
+        try { return msg.reply(texto); } catch (e) {}
+    }
 }
 
 async function enviarComDigitando(chat, texto) {
-    await chat.sendStateTyping();
-    await delay(1000); 
-    return chat.sendMessage(texto);
+    try {
+        await chat.sendStateTyping();
+        await delay(1000); 
+        return chat.sendMessage(texto);
+    } catch (err) {
+        console.error('Falha ao enviar com digitando (send):', err.message);
+        try { return chat.sendMessage(texto); } catch (e) {}
+    }
 }
 
 // ⏰ FUNÇÃO SEGUNDO PLANO (LEMBRETES DE AGENDAMENTO)
 async function verificarEDispararLembretes() {
+    if (!whatsappPronto) {
+        console.log('⏳ [Lembretes] Aguardando conexão ativa do WhatsApp...');
+        return;
+    }
     try {
         console.log('🔍 [Sistema] Verificando se há lembretes para enviar...');
         const dataHojeStr = obterDataFormatada(0);
@@ -123,7 +145,7 @@ async function verificarEDispararLembretes() {
             .eq('Lembrete', false);
 
         if (error) throw error;
-        if (!registros) return;
+        if (!registros || registros.length === 0) return;
 
         const agora = new Date(new Date().toLocaleString("en-US", {timeZone: "America/Sao_Paulo"}));
         for (const reg of registros) {
@@ -143,7 +165,6 @@ async function verificarEDispararLembretes() {
             if (diferencaEmMinutos > 0 && diferencaEmMinutos <= 60) {
                 console.log(`📢 Enviando lembrete para ${nomeCliente} - Horário: ${horarioStr}`);
                 try {
-                    // CÓDIGO CORRIGIDO: Envio direto, ignorando getChatById
                     await client.sendMessage(telefoneCliente, `⏰ *Lembrete de Agendamento!* \n\nFala, ${nomeCliente}! Passando para lembrar que o seu horário de *${servicoCliente}* é daqui a pouco, às *${horarioStr}*.\n\nEstamos te esperando! 💈👊`);
                     await supabase.from('Agendamentos').update({ Lembrete: true }).eq('id', reg.id);
                 } catch (err) {
@@ -159,6 +180,10 @@ async function verificarEDispararLembretes() {
 
 // ⏳ FUNÇÃO SEGUNDO PLANO (EXPIRAÇÃO DE PIX/CARTÃO NÃO PAGOS)
 async function verificarEExpirarPagamentos() {
+    if (!whatsappPronto) {
+        console.log('⏳ [Expiração] Aguardando conexão ativa do WhatsApp...');
+        return;
+    }
     try {
         console.log('🔍 [Sistema] Verificando se há pagamentos pendentes expirados...');
         const { data: pendentes, error } = await supabase
@@ -167,7 +192,7 @@ async function verificarEExpirarPagamentos() {
             .eq('Status', 'Aguardando Pagamento');
 
         if (error) throw error;
-        if (!pendentes) return;
+        if (!pendentes || pendentes.length === 0) return;
 
         const registrosExpirados = pendentes.filter(reg => {
             const createdAt = new Date(reg.created_at).getTime();
@@ -181,7 +206,6 @@ async function verificarEExpirarPagamentos() {
             await supabase.from('Agendamentos').update({ Status: 'Cancelado' }).eq('id', reg.id);
             if (reg.Telefone) {
                 try {
-                    // CÓDIGO CORRIGIDO: Envio direto, ignorando getChatById
                     await client.sendMessage(reg.Telefone, `⚠️ *Tempo Limite Expirado!*\n\nFala, ${reg.Nome}. Como o pagamento do Pix/Cartão não foi realizado nos últimos 10 minutos, o seu horário das *${reg.Horário}* foi cancelado automaticamente para liberar a vaga para outros clientes.\n\nCaso ainda queira realizar o serviço, basta mandar um *"Oi"* para reiniciar e escolher um novo horário! 💈👊`);
                 } catch (errWpp) {
                     console.error('Erro ao enviar mensagem de expiração:', errWpp);
@@ -196,6 +220,10 @@ async function verificarEExpirarPagamentos() {
 
 // 💸 FUNÇÃO SEGUNDO PLANO (COBRANÇA DE MENSALIDADES)
 async function cobrarMensalidades() {
+    if (!whatsappPronto) {
+        console.log('⏳ [Mensalidades] Aguardando conexão ativa do WhatsApp...');
+        return;
+    }
     try {
         console.log('🔍 [Sistema] Verificando vencimento de mensalidades dos barbeiros...');
         const { data: registros, error } = await supabase
@@ -204,7 +232,7 @@ async function cobrarMensalidades() {
             .in('Status', ['Pago', 'Pendente']);
 
         if (error) throw error;
-        if (!registros) return;
+        if (!registros || registros.length === 0) return;
 
         const agora = new Date(new Date().toLocaleString("en-US", {timeZone: "America/Sao_Paulo"}));
         for (const reg of registros) {
@@ -294,32 +322,36 @@ async function resetarHorariosDiarios() {
     }
 }
 
-client.on('qr', (qr) => qrcode.generate(qr, { small: true }));
-
-client.on('ready', () => {
-    console.log('BarberSync: Sistema de Lembretes, Mensalidades e Limpeza Ativado! ⏰🛡️💈');
-    
-    verificarEDispararLembretes();
-    verificarEExpirarPagamentos();
-    cobrarMensalidades();
-    resetarHorariosDiarios();
-    
-    setInterval(() => {
-        verificarEDispararLembretes();
-        verificarEExpirarPagamentos();
-        resetarHorariosDiarios(); 
-    }, 600000);
-
-    setInterval(() => {
-        cobrarMensalidades();
-    }, 7200000);
+// Gerador de QR Code no terminal
+client.on('qr', (qr) => {
+    whatsappPronto = false;
+    qrcode.generate(qr, { small: true });
 });
 
-// 📶 EVENTO DE MENSAGENS RECEBIDAS
+// Desconectado do WhatsApp
+client.on('disconnected', (reason) => {
+    console.log('❌ WhatsApp Desconectado! Motivo:', reason);
+    whatsappPronto = false;
+});
+
+// Conectado com sucesso
+client.on('ready', () => {
+    console.log('✅ BarberSync: Conectado com sucesso ao WhatsApp!');
+    whatsappPronto = true;
+});
+
+// Evento de Mensagens Recebidas
 client.on('message', async msg => {
     if (msg.type !== 'chat') return;
 
-    const chat = await msg.getChat();
+    let chat;
+    try {
+        chat = await msg.getChat();
+    } catch (errChat) {
+        console.error('Não foi possível obter a conversa no recebimento da mensagem:', errChat.message);
+        return;
+    }
+
     if (chat.isGroup || msg.fromMe || msg.isBroadcast) return;
 
     const tempoAtual = Math.floor(Date.now() / 1000);
@@ -625,7 +657,6 @@ client.on('message', async msg => {
                     if (r.Status !== 'Livre') return false; 
                     
                     if (dataEscolhida === dataHojeStr) {
-                       
                         return r.Horário > horaAtualStr; 
                     }
                     return true;
@@ -642,7 +673,6 @@ client.on('message', async msg => {
                         const numeroOpcao = (index + 1).toString();
                         userStates[userId].horariosDisponiveis[numeroOpcao] = { hora: r.Horário, id: r.id };
                         listaHorariosFormatada += `⏰ *${numeroOpcao}.* ${r.Horário}\n`;
-     
                     });
                     
                     userStates[userId].step = 'choosing_time';
@@ -673,7 +703,6 @@ client.on('message', async msg => {
                     servicosRegs.forEach((r, index) => {
                         const numeroOpcao = (index + 1).toString();
                         userStates[userId].servicosDisponiveis[numeroOpcao] = { nome: r.Nome, preco: r.Preco };
-        
                         menuServicos += `🔹 *${numeroOpcao}.* ${r.Nome} — R$ ${r.Preco}\n`;
                     });
                 }
@@ -748,7 +777,6 @@ client.on('message', async msg => {
                     await supabase.from('Agendamentos').insert([{ 
                         "Data": dataCorreta, "Nome": userStates[userId].nomeCliente, 
                         "Horário": userStates[userId].horarioEscolhido, "Serviço": userStates[userId].servicoEscolhido, 
-              
                         "Valor": Number(userStates[userId].precoServicoPuro),
                         "Status": "Agendado", "Telefone": userId 
                     }]);
@@ -763,7 +791,6 @@ client.on('message', async msg => {
                 else if (opcaoPagamento === '2') {
                     const { data: novoAgendamento } = await supabase.from('Agendamentos').insert([{ 
                         "Data": dataCorreta, "Nome": userStates[userId].nomeCliente, 
-                       
                         "Horário": userStates[userId].horarioEscolhido, "Serviço": userStates[userId].servicoEscolhido, 
                         "Valor": Number(userStates[userId].precoServicoPuro),
                         "Status": "Aguardando Pagamento", "Telefone": userId 
@@ -775,16 +802,13 @@ client.on('message', async msg => {
                         method: 'POST',
                         headers: {
                             'Authorization': `Bearer ${process.env.MERCADO_PAGO_TOKEN}`,
-      
                             'Content-Type': 'application/json',
                             'X-Idempotency-Key': String(Date.now())
                         },
-                        
                         body: JSON.stringify({
                             transaction_amount: Number(userStates[userId].precoServicoPuro),
                             description: `Agendamento - ${userStates[userId].nomeServicoPuro}`,
                             payment_method_id: 'pix',
-          
                             payer: { email: 'cliente@barbersync.com' },
                             external_reference: String(agendamentoIdParaRollback)
                         })
@@ -805,7 +829,6 @@ client.on('message', async msg => {
                 else if (opcaoPagamento === '3') {
                     const { data: novoAgendamento } = await supabase.from('Agendamentos').insert([{ 
                         "Data": dataCorreta, "Nome": userStates[userId].nomeCliente, 
-                    
                         "Horário": userStates[userId].horarioEscolhido, "Serviço": userStates[userId].servicoEscolhido, 
                         "Valor": Number(userStates[userId].precoServicoPuro),
                         "Status": "Aguardando Pagamento", "Telefone": userId 
@@ -817,28 +840,22 @@ client.on('message', async msg => {
                         method: 'POST',
                         headers: {
                             'Authorization': `Bearer ${process.env.MERCADO_PAGO_TOKEN}`,
-     
-                             'Content-Type': 'application/json'
+                            'Content-Type': 'application/json'
                         },
                         body: JSON.stringify({
-                           
                             items: [{
                                 title: `Agendamento - ${userStates[userId].nomeServicoPuro}`,
                                 quantity: 1,
-                              
                                 unit_price: Number(userStates[userId].precoServicoPuro),
                                 currency_id: 'BRL'
                             }],
                             external_reference: String(agendamentoIdParaRollback),
-       
-                             back_urls: { 
+                            back_urls: { 
                                 success: 'https://seusite.com/sucesso',
                                 failure: 'https://seusite.com/falha',
-           
                                 pending: 'https://seusite.com/pendente' 
                             },
                             auto_return: 'approved'
-                    
                         })
                     });
                     const dataMP = await responseMP.json();
@@ -876,11 +893,9 @@ client.on('message', async msg => {
                 try {
                     if (userStates[userId].step !== 'idle') {
                         userStates[userId].step = 'idle';
-            
                         await enviarComDigitando(chat, "⏳ *Atendimento encerrado por inatividade!*\n\nComo ficamos muito tempo sem resposta, finalizei o seu atendimento para não congestionar o nosso sistema.\n\nQuando quiser agendar novamente, é só mandar um *'Oi'*! 💈");
                     }
                 } catch (err) {
-                   
                     console.error(err);
                 }
             }, 120000);
@@ -901,7 +916,6 @@ app.post('/webhook', async (req, res) => {
     try {
         const response = await fetch(`https://api.mercadopago.com/v1/payments/${paymentId}`, {
             headers: { 'Authorization': `Bearer ${process.env.MERCADO_PAGO_TOKEN}` }
-        
         });
         const paymentData = await response.json();
 
@@ -917,17 +931,21 @@ app.post('/webhook', async (req, res) => {
                 const horario = agendamento.Horário;
                 const servico = agendamento.Serviço;
                 const diaVisual = agendamento.Data.split('-').reverse().join('/');
-                try {
-                    // CÓDIGO CORRIGIDO: Envio direto pelo client
-                    await client.sendMessage(telefoneCliente, `🎉 *Pagamento Confirmado!* \n\nPerfeito, ${nomeCliente}! Seu pagamento foi aprovado pelo Mercado Pago e o seu horário de *${servico}* está 100% confirmado para o dia *${diaVisual}* às *${horario}*.\n\nMuito obrigado! Estamos te esperando! 💈💈`);
-                    await client.sendMessage(telefoneCliente, '📍 *Aqui está a nossa localização no Google Maps caso precise:* \n\nhttps://maps.app.goo.gl/kneNwDiQREA6GqUBA');
-                } catch (err) {
-                    console.error("Erro ao enviar mensagem de webhook via whatsapp", err);
+                
+                if (whatsappPronto) {
+                    try {
+                        await client.sendMessage(telefoneCliente, `🎉 *Pagamento Confirmado!* \n\nPerfeito, ${nomeCliente}! Seu pagamento foi aprovado pelo Mercado Pago e o seu horário de *${servico}* está 100% confirmado para o dia *${diaVisual}* às *${horario}*.\n\nMuito obrigado! Estamos te esperando! 💈💈`);
+                        await client.sendMessage(telefoneCliente, '📍 *Aqui está a nossa localização no Google Maps caso precise:* \n\nhttps://maps.app.goo.gl/kneNwDiQREA6GqUBA');
+                    } catch (err) {
+                        console.error("Erro ao enviar mensagem de webhook via whatsapp", err);
+                    }
+                } else {
+                    console.log(`[Webhook] Pagamento de ${nomeCliente} aprovado, mas o WhatsApp não estava pronto para notificar.`);
                 }
             }
         }
         
-        // 🔴 CASO 2: PAGAMENTO RECUSADO/FALHOU (NOVA LÓGICA)
+        // 🔴 CASO 2: PAGAMENTO RECUSADO/FALHOU
         else if (paymentData.status === 'rejected') {
             const agendamentoId = paymentData.external_reference;
             const { data: agendamento } = await supabase.from('Agendamentos').select('*').eq('id', agendamentoId).single();
@@ -939,11 +957,13 @@ app.post('/webhook', async (req, res) => {
                 const telefoneCliente = agendamento.Telefone;
                 const nomeCliente = agendamento.Nome;
                 console.log(`⚠️ [Webhook] Pagamento do cliente ${nomeCliente} foi recusado. Horário das ${agendamento.Horário} liberado.`);
-                try {
-                    // CÓDIGO CORRIGIDO: Envio direto pelo client
-                    await client.sendMessage(telefoneCliente, `⚠️ *Ops, Pagamento Não Aprovado!*\n\nFala, ${nomeCliente}. O Mercado Pago nos informou que a sua tentativa de pagamento foi *recusada* (pode ser saldo insuficiente, cartão bloqueado ou dados incorretos).\n\nComo o pagamento falhou, sua reserva foi cancelada para liberar o horário. Caso queira tentar de novo com outro cartão, pix ou pagar no estabelecimento, basta mandar um *"Oi"* para reiniciar! 💈👊`);
-                } catch (errWpp) {
-                    console.error("Erro ao enviar mensagem de recusa via whatsapp", errWpp);
+                
+                if (whatsappPronto) {
+                    try {
+                        await client.sendMessage(telefoneCliente, `⚠️ *Ops, Pagamento Não Aprovado!*\n\nFala, ${nomeCliente}. O Mercado Pago nos informou que a sua tentativa de pagamento foi *recusada* (pode ser saldo insuficiente, cartão bloqueado ou dados incorretos).\n\nComo o pagamento falhou, sua reserva foi cancelada para liberar o horário. Caso queira tentar de novo com outro cartão, pix ou pagar no estabelecimento, basta mandar um *"Oi"* para reiniciar! 💈👊`);
+                    } catch (errWpp) {
+                        console.error("Erro ao enviar mensagem de recusa via whatsapp", errWpp);
+                    }
                 }
             }
         }
@@ -952,6 +972,21 @@ app.post('/webhook', async (req, res) => {
     }
 });
 
-// Inicializa o servidor Express e o Cliente WhatsApp
-app.listen(PORT, () => console.log(`🌐 Servidor Webhook rodando na porta ${PORT}`)); 
-client.initialize();
+// Inicializa o servidor Express APENAS uma vez ao iniciar o arquivo
+app.listen(PORT, () => {
+    console.log(`🌐 Servidor Webhook rodando estavelmente na porta ${PORT}`);
+    
+    // Inicia os loops automáticos apenas uma vez, pois o Express não reinicia
+    setInterval(() => {
+        verificarEDispararLembretes();
+        verificarEExpirarPagamentos();
+        resetarHorariosDiarios(); 
+    }, 600000); // Executa a cada 10 minutos
+
+    setInterval(() => {
+        cobrarMensalidades();
+    }, 7200000); // Executa a cada 2 horas
+    
+    // Inicializa o cliente do WhatsApp Web
+    client.initialize();
+});
