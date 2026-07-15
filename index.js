@@ -25,6 +25,7 @@ const client = new Client({
 });
 
 const userStates = {};
+const datasBloqueadas = ['2026-07-23', '2026-07-24']; // 📅 BLOQUEIO DE DATAS: Adicione aqui as datas que deseja fechar totalmente (Formato: AAAA-MM-DD)
 let ultimaLimpezaDiaria = null; // TRAVA DE SEGURANÇA PARA A LIMPEZA DA MEIA-NOITE
 
 // ⏱️ FUNÇÃO AUXILIAR DE DELAY
@@ -474,9 +475,9 @@ client.on('message', async msg => {
                             const diaMarcado = ag.Data.split('-').reverse().slice(0,2).join('/');
                             let mensagemBase = '';
                             if (ag.Status === 'Aguardando Pagamento') {
-                                mensagemBase = `💈 Ei! Você já iniciou um agendamento de *${ag.Serviço}* para às *${ag.Horário}*, mas ele ainda está *Aguardando Pagamento*.`;
+                                mensagemBase = `💈 Ei!\nVocê já iniciou um agendamento de *${ag.Serviço}* para às *${ag.Horário}*, mas ele ainda está *Aguardando Pagamento*.`;
                             } else {
-                                mensagemBase = `💈 Fala, campeão! Verifiquei no sistema e você já possui um horário de *${ag.Serviço}* pré-agendado para o dia *${diaMarcado}* às *${ag.Horário}*.`;
+                                mensagemBase = `💈 Fala, campeão!\nVerifiquei no sistema e você já possui um horário de *${ag.Serviço}* pré-agendado para o dia *${diaMarcado}* às *${ag.Horário}*.`;
                             }
 
                             mensagemBase += `\n\n🤔 *Deseja agendar mais um horário?*\nVocê pode realizar até 2 agendamentos simultâneos por número.\n\n👍 *1.* Sim, quero fazer mais 1 agendamento\n❌ *2.* Não, quero cancelar meu agendamento atual`;
@@ -515,8 +516,16 @@ client.on('message', async msg => {
 
                     const formatarBr = (dataStr) => dataStr.split('-').reverse().slice(0,2).join('/');
 
+                    const obterLinhaData = (dataStr, label, numero) => {
+                        const dataFormatada = formatarBr(dataStr);
+                        if (datasBloqueadas.includes(dataStr)) {
+                            return `📅 *${numero}.* ${label} (${dataFormatada}) 🚫 [INDISPONÍVEL]`;
+                        }
+                        return `📅 *${numero}.* ${label} (${dataFormatada})`;
+                    };
+
                     userStates[userId].step = 'choosing_date';
-                    await responderComDigitando(chat, msg, `💈 *Bem-vindo à barbearia Duas Faces!*\n\nPara quando você deseja agendar o seu horário?\n\n📅 *1.* Hoje (${formatarBr(dataHoje)})\n📅 *2.* Amanhã (${formatarBr(dataAmanha)})\n📅 *3.* Depois de Amanhã (${formatarBr(dataDepois)})\n\nDigite apenas o *número* da opção desejada:`);
+                    await responderComDigitando(chat, msg, `💈 *Bem-vindo à barbearia Duas Faces!*\n\nPara quando você deseja agendar o seu horário?\n\n${obterLinhaData(dataHoje, 'Hoje', 1)}\n${obterLinhaData(dataAmanha, 'Amanhã', 2)}\n${obterLinhaData(dataDepois, 'Depois de Amanhã', 3)}\n\nDigite apenas o *número* da opção desejada:`);
                 } catch (error) {
                     console.error(error);
                     await responderComDigitando(chat, msg, 'Erro ao acessar o sistema. Tente novamente.');
@@ -546,11 +555,18 @@ client.on('message', async msg => {
                     '2': dataAmanha,
                     '3': dataDepois
                 };
-
                 const formatarBr = (dataStr) => dataStr.split('-').reverse().slice(0,2).join('/');
 
+                const obterLinhaData = (dataStr, label, numero) => {
+                    const dataFormatada = formatarBr(dataStr);
+                    if (datasBloqueadas.includes(dataStr)) {
+                        return `📅 *${numero}.* ${label} (${dataFormatada}) 🚫 [INDISPONÍVEL]`;
+                    }
+                    return `📅 *${numero}.* ${label} (${dataFormatada})`;
+                };
+
                 userStates[userId].step = 'choosing_date';
-                await responderComDigitando(chat, msg, `💈 *Bem-vindo à barbearia Duas Faces!*\n\nPara quando você deseja agendar o seu horário?\n\n📅 *1.* Hoje (${formatarBr(dataHoje)})\n📅 *2.* Amanhã (${formatarBr(dataAmanha)})\n📅 *3.* Depois de Amanhã (${formatarBr(dataDepois)})\n\nDigite apenas o *número* da opção desejada:`);
+                await responderComDigitando(chat, msg, `💈 *Bem-vindo à barbearia Duas Faces!*\n\nPara quando você deseja agendar o seu horário?\n\n${obterLinhaData(dataHoje, 'Hoje', 1)}\n${obterLinhaData(dataAmanha, 'Amanhã', 2)}\n${obterLinhaData(dataDepois, 'Depois de Amanhã', 3)}\n\nDigite apenas o *número* da opção desejada:`);
             } else if (opcao === '2') {
                 try {
                     const { data: ags } = await supabase
@@ -581,6 +597,14 @@ client.on('message', async msg => {
             const dataEscolhida = userStates[userId].diasDisponiveis ? userStates[userId].diasDisponiveis[opcaoData] : null;
 
             if (!dataEscolhida) return responderComDigitando(chat, msg, '⚠️ Opção inválida. Digite 1 para Hoje, 2 para Amanhã ou 3 para Depois de Amanhã.');
+
+            // 🚫 VERIFICAÇÃO DE DATA BLOQUEADA
+            if (datasBloqueadas.includes(dataEscolhida)) {
+                await responderComDigitando(chat, msg, '💈 Olá! Esta data está indisponível pois não teremos expediente na barbearia neste dia. Por favor, envie um *"Oi"* para reiniciar e escolher outro dia! 👊');
+                userStates[userId].step = 'idle';
+                return;
+            }
+
             userStates[userId].dataSelecionada = dataEscolhida;
 
             try {
@@ -600,6 +624,7 @@ client.on('message', async msg => {
                     if (r.Status !== 'Livre') return false; 
                     
                     if (dataEscolhida === dataHojeStr) {
+                       
                         return r.Horário > horaAtualStr; 
                     }
                     return true;
@@ -616,6 +641,7 @@ client.on('message', async msg => {
                         const numeroOpcao = (index + 1).toString();
                         userStates[userId].horariosDisponiveis[numeroOpcao] = { hora: r.Horário, id: r.id };
                         listaHorariosFormatada += `⏰ *${numeroOpcao}.* ${r.Horário}\n`;
+     
                     });
                     
                     userStates[userId].step = 'choosing_time';
@@ -646,6 +672,7 @@ client.on('message', async msg => {
                     servicosRegs.forEach((r, index) => {
                         const numeroOpcao = (index + 1).toString();
                         userStates[userId].servicosDisponiveis[numeroOpcao] = { nome: r.Nome, preco: r.Preco };
+        
                         menuServicos += `🔹 *${numeroOpcao}.* ${r.Nome} — R$ ${r.Preco}\n`;
                     });
                 }
@@ -720,6 +747,7 @@ client.on('message', async msg => {
                     await supabase.from('Agendamentos').insert([{ 
                         "Data": dataCorreta, "Nome": userStates[userId].nomeCliente, 
                         "Horário": userStates[userId].horarioEscolhido, "Serviço": userStates[userId].servicoEscolhido, 
+              
                         "Valor": Number(userStates[userId].precoServicoPuro),
                         "Status": "Agendado", "Telefone": userId 
                     }]);
@@ -734,6 +762,7 @@ client.on('message', async msg => {
                 else if (opcaoPagamento === '2') {
                     const { data: novoAgendamento } = await supabase.from('Agendamentos').insert([{ 
                         "Data": dataCorreta, "Nome": userStates[userId].nomeCliente, 
+                       
                         "Horário": userStates[userId].horarioEscolhido, "Serviço": userStates[userId].servicoEscolhido, 
                         "Valor": Number(userStates[userId].precoServicoPuro),
                         "Status": "Aguardando Pagamento", "Telefone": userId 
@@ -745,13 +774,16 @@ client.on('message', async msg => {
                         method: 'POST',
                         headers: {
                             'Authorization': `Bearer ${process.env.MERCADO_PAGO_TOKEN}`,
+      
                             'Content-Type': 'application/json',
                             'X-Idempotency-Key': String(Date.now())
                         },
+                        
                         body: JSON.stringify({
                             transaction_amount: Number(userStates[userId].precoServicoPuro),
                             description: `Agendamento - ${userStates[userId].nomeServicoPuro}`,
                             payment_method_id: 'pix',
+          
                             payer: { email: 'cliente@barbersync.com' },
                             external_reference: String(agendamentoIdParaRollback)
                         })
@@ -760,11 +792,9 @@ client.on('message', async msg => {
                     const pixCopiaCola = dataMP.point_of_interaction?.transaction_data?.qr_code;
 
                     if (!pixCopiaCola) throw new Error('Erro ao gerar código Pix.');
-                    
                     console.log(`⚡ [Sistema] Código Pix gerado com sucesso para o cliente: ${userStates[userId].nomeCliente}`);
                     
                     await supabase.from('Agendamentos').update({ ID_Pagamento_MP: String(dataMP.id) }).eq('id', agendamentoIdParaRollback);
-                    
                     await responderComDigitando(chat, msg, `⚡ Perfeito! Para confirmar seu horário do dia *${diaVisualFinal}* às *${userStates[userId].horarioEscolhido}*, utilize o código Pix Copia e Cola que estou enviando na mensagem abaixo 👇`);
                     await client.sendMessage(userId, pixCopiaCola);
                     await enviarComDigitando(chat, `👆 *Copie apenas a mensagem acima*, abra o aplicativo do seu banco e use a option "Pix Copia e Cola". Nosso sistema identificará o pagamento e confirmará tudo em instantes!`);
@@ -774,6 +804,7 @@ client.on('message', async msg => {
                 else if (opcaoPagamento === '3') {
                     const { data: novoAgendamento } = await supabase.from('Agendamentos').insert([{ 
                         "Data": dataCorreta, "Nome": userStates[userId].nomeCliente, 
+                    
                         "Horário": userStates[userId].horarioEscolhido, "Serviço": userStates[userId].servicoEscolhido, 
                         "Valor": Number(userStates[userId].precoServicoPuro),
                         "Status": "Aguardando Pagamento", "Telefone": userId 
@@ -785,33 +816,37 @@ client.on('message', async msg => {
                         method: 'POST',
                         headers: {
                             'Authorization': `Bearer ${process.env.MERCADO_PAGO_TOKEN}`,
-                            'Content-Type': 'application/json'
+     
+                             'Content-Type': 'application/json'
                         },
                         body: JSON.stringify({
+                           
                             items: [{
                                 title: `Agendamento - ${userStates[userId].nomeServicoPuro}`,
                                 quantity: 1,
+                              
                                 unit_price: Number(userStates[userId].precoServicoPuro),
                                 currency_id: 'BRL'
                             }],
                             external_reference: String(agendamentoIdParaRollback),
-                            back_urls: { 
+       
+                             back_urls: { 
                                 success: 'https://seusite.com/sucesso',
                                 failure: 'https://seusite.com/falha',
+           
                                 pending: 'https://seusite.com/pendente' 
                             },
                             auto_return: 'approved'
+                    
                         })
                     });
                     const dataMP = await responseMP.json();
                     const linkCartao = dataMP.init_point;
 
                     if (!linkCartao) throw new Error('Erro ao gerar Preference Link.');
-                    
                     console.log(`💳 [Sistema] Link de Cartão gerado com sucesso para o cliente: ${userStates[userId].nomeCliente}`);
                     
                     await supabase.from('Agendamentos').update({ ID_Pagamento_MP: String(dataMP.id) }).eq('id', agendamentoIdParaRollback);
-                    
                     await responderComDigitando(chat, msg, `💳 Excelente! Clique no link seguro abaixo para realizar o pagamento com seu Cartão de Crédito:\n\n${linkCartao}\n\nAssim que o pagamento for aprovado, o sistema atualizará o seu horário automaticamente!`);
                     userStates[userId].step = 'idle';
                 }
@@ -840,9 +875,11 @@ client.on('message', async msg => {
                 try {
                     if (userStates[userId].step !== 'idle') {
                         userStates[userId].step = 'idle';
+            
                         await enviarComDigitando(chat, "⏳ *Atendimento encerrado por inatividade!*\n\nComo ficamos muito tempo sem resposta, finalizei o seu atendimento para não congestionar o nosso sistema.\n\nQuando quiser agendar novamente, é só mandar um *'Oi'*! 💈");
                     }
                 } catch (err) {
+                   
                     console.error(err);
                 }
             }, 120000);
@@ -863,6 +900,7 @@ app.post('/webhook', async (req, res) => {
     try {
         const response = await fetch(`https://api.mercadopago.com/v1/payments/${paymentId}`, {
             headers: { 'Authorization': `Bearer ${process.env.MERCADO_PAGO_TOKEN}` }
+        
         });
         const paymentData = await response.json();
 
@@ -871,7 +909,8 @@ app.post('/webhook', async (req, res) => {
             const agendamentoId = paymentData.external_reference;
             const { data: agendamento } = await supabase.from('Agendamentos').select('*').eq('id', agendamentoId).single();
             
-            if (agendamento && agendamento.Status === 'Aguardando Pagamento') {
+            if (agendamento && agendamento.Status 
+                === 'Aguardando Pagamento') {
                 await supabase.from('Agendamentos').update({ Status: 'Agendado' }).eq('id', agendamentoId);
                 const telefoneCliente = agendamento.Telefone;
                 const nomeCliente = agendamento.Nome;
@@ -902,9 +941,7 @@ app.post('/webhook', async (req, res) => {
                 
                 const telefoneCliente = agendamento.Telefone;
                 const nomeCliente = agendamento.Nome;
-                
                 console.log(`⚠️ [Webhook] Pagamento do cliente ${nomeCliente} foi recusado. Horário das ${agendamento.Horário} liberado.`);
-                
                 try {
                     const chat = await client.getChatById(telefoneCliente);
                     await chat.sendStateTyping();
