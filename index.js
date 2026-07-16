@@ -8,6 +8,7 @@ const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY
 // 🌐 CONFIGURAÇÃO DO SERVIDOR WEBHOOK (EXPRESS)
 const app = express();
 app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 const PORT = process.env.PORT || 3000;
 
 // 🔑 CONFIGURAÇÕES DA EVOLUTION API (Ajuste aqui com os dados da sua instância)
