@@ -422,12 +422,12 @@ app.post('/webhook-evolution', async (req, res) => {
             const agora = Date.now();
             const tempoPassado = (agora - userStates[userId].lastBooking) / 60000;
             
-            if (tempoPassado >= 5) userStates[userId].justCanceled = false;
-            if (userStates[userId].lastBooking !== 0 && tempoPassado < 5) {
+            if (tempoPassado >= 1) userStates[userId].justCanceled = false;
+            if (userStates[userId].lastBooking !== 0 && tempoPassado < 1) {
                 if (userStates[userId].justCanceled) {
-                    return enviarMensagem(userId, `⚠️ Calma lá! Seu agendamento anterior foi cancelado, mas você ainda precisa aguardar mais ${Math.ceil(5 - tempoPassado)} minuto(s) para realizar um novo agendamento no sistema. 💈`);
+                    return enviarMensagem(userId, `⚠️ Calma lá! Seu agendamento anterior foi cancelado, mas você ainda precisa aguardar mais ${Math.ceil(1 - tempoPassado)} minuto(s) para realizar um novo agendamento no sistema. 💈`);
                 } else {
-                    return enviarMensagem(userId, `⚠️ Calma lá! Aguarde mais ${Math.ceil(5 - tempoPassado)} minuto(s) para um novo agendamento, ou digite "cancelar" para desistir do seu horário atual.`);
+                    return enviarMensagem(userId, `⚠️ Calma lá! Aguarde mais ${Math.ceil(1 - tempoPassado)} minuto(s) para um novo agendamento, ou digite "cancelar" para desistir do seu horário atual.`);
                 }
             }
 
