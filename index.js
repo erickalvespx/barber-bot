@@ -17,7 +17,7 @@ const EVOLUTION_API_KEY = process.env.EVOLUTION_API_KEY || "SUA_API_KEY_AQUI";
 const INSTANCE_NAME = process.env.INSTANCE_NAME || "suainstancia"; // Nome da instância configurada na Evolution API
 
 const userStates = {};
-const datasBloqueadas = ['2026-08-07']; // 📅 BLOQUEIO DE DATAS (Formato: AAAA-MM-DD)
+const datasBloqueadas = ['2026-10-14', '2026-10-15', '2026-10-16', '2026-10-17', '2026-10-18', '2026-10-19', '2026-10-20', '2026-10-21','2026-10-22']; // 📅 BLOQUEIO DE DATAS (Formato: AAAA-MM-DD)
 let ultimaLimpezaDiaria = null; // TRAVA DE SEGURANÇA PARA A LIMPEZA DA MEIA-NOITE
 
 // ⏱️ FUNÇÃO AUXILIAR DE DELAY
